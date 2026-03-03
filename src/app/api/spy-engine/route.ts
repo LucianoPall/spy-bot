@@ -1,12 +1,7 @@
 import { NextResponse } from 'next/server';
-import { ApifyClient } from 'apify-client';
 import OpenAI from 'openai';
 
 // Inicializa os clientes das APIs (com fallbacks vazios para evitar erro de build na Vercel)
-const apifyClient = new ApifyClient({
-    token: process.env.APIFY_API_TOKEN || "dummy_token_for_build",
-});
-
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY || "dummy_key_for_build",
 });
@@ -37,8 +32,19 @@ export async function POST(req: Request) {
                 maxItems: 1,
             };
 
-            const run = await apifyClient.actor("apify/facebook-ads-scraper").call(input);
-            const { items } = await apifyClient.dataset(run.defaultDatasetId).listItems();
+            const apifyToken = process.env.APIFY_API_TOKEN || "dummy";
+            const response = await fetch(`https://api.apify.com/v2/acts/apify~facebook-ads-scraper/run-sync-get-dataset-items?token=${apifyToken}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(input)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Apify API Error: ${response.status} - ${errorText}`);
+            }
+
+            const items = await response.json();
 
             if (items && items.length > 0) {
                 const adData = items[0];
