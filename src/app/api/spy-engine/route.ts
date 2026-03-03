@@ -45,43 +45,72 @@ export async function POST(req: Request) {
             adImageUrl = "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=800";
         }
 
-        // 2. Fase de IA (Reengenharia de Copywriting)
-        const chatCompletion = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [
-                {
-                    role: "system",
-                    content: `Você é um copywriter de elite (nível Russell Brunson). Seu objetivo é analisar a copy vitoriosa fornecida e recriá-la em 3 variações exclusivas para alta conversão.
-                    
-Regras:
-1. Extraia a "Big Idea" e os ganchos (hooks).
-2. Entregue a Variante 1 focada em Dor Extrema.
-3. Entregue a Variante 2 focada em Solução e Benefício.
-4. Entregue a Variante 3 curta (Storytelling rápido e direto ao ponto).
-Responda em JSON válido no formato: { "variante1": "texto", "variante2": "texto", "variante3": "texto" }`
+        // Verificação se estamos rodando sem chave real na produção para pular a chamada e não quebrar com 500
+        if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "dummy_key_for_build") {
+            console.log("Mocking OpenAI because API key is missing or dummy...");
+            return NextResponse.json({
+                success: true,
+                originalAd: {
+                    copy: originalCopy,
+                    image: adImageUrl
                 },
-                {
-                    role: "user",
-                    content: `Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
+                generatedVariations: {
+                    variante1: "(DEMO) O mercado de estética está virado de cabeça para baixo. Suas concorrentes que cobram metade do seu preço estão lotando a agenda enquanto você sua a camisa. Pare de brigar por centavos e implemente o Protocolo Diamante.",
+                    variante2: "(DEMO) Lotar sua clínica nunca foi tão fácil. Com o Protocolo Diamante, você atrai clientes de alto padrão dispostas a pagar o triplo pelo seu serviço. Tudo isso sem depender de dancinhas no Instagram.",
+                    variante3: "(DEMO) Ana estava quase fechando a clínica. Ela não aguentava mais clientes pedindo desconto. Até que ela descobriu um padrão de vendas secreto. Dois meses depois, ela precisou contratar 3 assistentes."
                 }
-            ],
-            response_format: { type: "json_object" }
-        });
+            });
+        }
 
-        const generatedCopys = JSON.parse(chatCompletion.choices[0].message.content || "{}");
+        // 2. Fase de IA (Reengenharia de Copywriting)
+        try {
+            const chatCompletion = await openai.chat.completions.create({
+                model: "gpt-4o",
+                messages: [
+                    {
+                        role: "system",
+                        content: `Você é um copywriter de elite (nível Russell Brunson). Seu objetivo é analisar a copy vitoriosa fornecida e recriá-la em 3 variações exclusivas para alta conversão.
+                        
+    Regras:
+    1. Extraia a "Big Idea" e os ganchos (hooks).
+    2. Entregue a Variante 1 focada em Dor Extrema.
+    3. Entregue a Variante 2 focada em Solução e Benefício.
+    4. Entregue a Variante 3 curta (Storytelling rápido e direto ao ponto).
+    Responda em JSON válido no formato: { "variante1": "texto", "variante2": "texto", "variante3": "texto" }`
+                    },
+                    {
+                        role: "user",
+                        content: `Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
+                    }
+                ],
+                response_format: { type: "json_object" }
+            });
 
-        // Retorna o pacote completo para o Front-End
-        return NextResponse.json({
-            success: true,
-            originalAd: {
-                copy: originalCopy,
-                image: adImageUrl
-            },
-            generatedVariations: generatedCopys
-        });
+            const generatedCopys = JSON.parse(chatCompletion.choices[0].message.content || "{}");
+
+            // Retorna o pacote completo para o Front-End
+            return NextResponse.json({
+                success: true,
+                originalAd: {
+                    copy: originalCopy,
+                    image: adImageUrl
+                },
+                generatedVariations: generatedCopys
+            });
+        } catch (openaiError: any) {
+            console.error("Erro Específico na OpenAI:", openaiError);
+            return NextResponse.json({
+                error: 'Erro de comunicação com a IA',
+                message: openaiError.message || String(openaiError),
+                details: "Verifique se a conta da OpenAI possui fundos e se a chave de API na Vercel está correta."
+            }, { status: 500 });
+        }
 
     } catch (error: any) {
-        console.error("Erro no Spy Bot Engine:", error);
-        return NextResponse.json({ error: 'Erro interno no servidor ao processar o anúncio.', message: error.message }, { status: 500 });
+        console.error("Erro Crítico no Spy Bot Engine:", error);
+        return NextResponse.json({
+            error: 'Erro catastrófico no servidor.',
+            message: error.message || String(error)
+        }, { status: 500 });
     }
 }
