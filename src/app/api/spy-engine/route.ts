@@ -29,6 +29,7 @@ export async function POST(req: Request) {
         let originalCopy = '';
         let adImageUrl = '';
 
+        let apifyErrorMessage = "";
         try {
             console.log(`Iniciando raspagem real com Apify na URL: ${adUrl}`);
             const input = {
@@ -44,15 +45,18 @@ export async function POST(req: Request) {
                 originalCopy = String(adData.primaryText || adData.text || '');
                 adImageUrl = String(adData.imageUrl || adData.thumbnailUrl || '');
                 console.log("Raspagem concluída com sucesso!");
+            } else {
+                apifyErrorMessage = "A extração retornou 0 itens (vazio). O Facebook pode ter bloqueado o proxy do Apify.";
             }
-        } catch (scraperError) {
+        } catch (scraperError: any) {
             console.warn("Erro no Apify Catcher (anti-bot ativado ou timeout):", scraperError);
+            apifyErrorMessage = scraperError.message || String(scraperError);
         }
 
         // FALLBACK INTELIGENTE (Para o MVP nunca travar se o Meta bloquear a raspagem sem proxy)
         if (!originalCopy) {
             console.log("Ativando Fallback de Extração para Demo...");
-            originalCopy = "Atenção! Você está perdendo dinheiro todos os dias com anúncios que não convertem. Descubra o método secreto que os grandes players usam para vender 10x mais sem precisar criar nada do zero. Clique em Saiba Mais e aplique a estratégia do oceano azul no seu negócio agora mesmo!";
+            originalCopy = `[ERRO NA EXTRAÇÃO REAL: ${apifyErrorMessage}] -> Texto Padrão de Recuperação: Atenção! Você está perdendo dinheiro todos os dias com anúncios que não convertem. Descubra o método secreto que os grandes players usam para vender 10x mais sem precisar criar nada do zero. Clique em Saiba Mais e aplique a estratégia do oceano azul no seu negócio agora mesmo!`;
             adImageUrl = "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=800";
         }
 
