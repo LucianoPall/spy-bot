@@ -17,7 +17,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                         <Target className="w-6 h-6 text-green-500" />
                         Spy Bot
                     </h1>
-                    <p className="text-xs text-gray-500 mt-1">PRO LICENCE - V1.0</p>
+                    <p className="text-xs text-gray-500 mt-1">PRO LICENCE - V1.2</p>
                 </div>
 
                 <nav className="flex-1 px-4 mt-8 space-y-2">
