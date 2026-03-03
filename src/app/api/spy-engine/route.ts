@@ -11,6 +11,8 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY || "dummy_key_for_build",
 });
 
+export const maxDuration = 60; // 60s limit to allow Apify scraping on Vercel Hobby
+
 export async function POST(req: Request) {
     try {
         const { adUrl } = await req.json();
@@ -27,15 +29,24 @@ export async function POST(req: Request) {
         let originalCopy = '';
         let adImageUrl = '';
 
-        // TENTATIVA TEMPORÁRIA DE DEBUG NAS FUNCTIONS DA VERCEL
-        // Como a varredura do FaceAds pode levar mais de 10 segundos, no Vercel Hobby Plan a Serverless Function 
-        // sofre Timeout (erro 500). Para fins de Teste (MVP), vamos pular direto pro fallback (Mock).
-
         try {
-            // Código do Apify temporariamente suprimido para evitar Vercel Timeout 10s Error
-            throw new Error("Suprimido para forçar Fallback de Venda");
+            console.log(`Iniciando raspagem real com Apify na URL: ${adUrl}`);
+            const input = {
+                startUrls: [{ url: adUrl }],
+                maxItems: 1,
+            };
+
+            const run = await apifyClient.actor("apify/facebook-ads-scraper").call(input);
+            const { items } = await apifyClient.dataset(run.defaultDatasetId).listItems();
+
+            if (items && items.length > 0) {
+                const adData = items[0];
+                originalCopy = String(adData.primaryText || adData.text || '');
+                adImageUrl = String(adData.imageUrl || adData.thumbnailUrl || '');
+                console.log("Raspagem concluída com sucesso!");
+            }
         } catch (scraperError) {
-            console.warn("Ignorando Apify no ambiente Vercel Serverless...");
+            console.warn("Erro no Apify Catcher (anti-bot ativado ou timeout):", scraperError);
         }
 
         // FALLBACK INTELIGENTE (Para o MVP nunca travar se o Meta bloquear a raspagem sem proxy)
