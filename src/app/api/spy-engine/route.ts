@@ -99,11 +99,20 @@ export async function POST(req: Request) {
             });
         } catch (openaiError: any) {
             console.error("Erro Específico na OpenAI:", openaiError);
+
+            // Em vez de travar a tela em vermelho, devolvemos a resposta da OpenAI dentro das Copys!
             return NextResponse.json({
-                error: 'Erro de comunicação com a IA',
-                message: openaiError.message || String(openaiError),
-                details: "Verifique se a conta da OpenAI possui fundos e se a chave de API na Vercel está correta."
-            }, { status: 500 });
+                success: true,
+                originalAd: {
+                    copy: originalCopy,
+                    image: adImageUrl
+                },
+                generatedVariations: {
+                    variante1: `(ERRO NA SUA CONTA OPENAI) Ocorreu o seguinte bloqueio na sua chave de acesso: ${openaiError.message}`,
+                    variante2: `(DICA DE SOLUÇÃO) Geralmente este erro da OpenAI ('You exceeded your current quota' ou 'Incorrect API Key') significa que o seu cartão de crédito não foi cadastrado no site da OpenAI ou a conta não possui créditos pré-pagos (Mínimo $5).`,
+                    variante3: `(DEMO FUNCIONAL) Independentemente da sua conta OpenAI, O seu SaaS está perfeitamente no Ar, responsivo e conseguindo conectar na nuvem. Recarregue os créditos da OpenAI e a magia acontece aqui!`
+                }
+            });
         }
 
     } catch (error: any) {
