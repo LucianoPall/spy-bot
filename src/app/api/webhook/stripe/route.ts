@@ -2,17 +2,17 @@ import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy_key_for_build', {
     apiVersion: '2026-02-25.clover',
 });
 
 // Usar Service Role Key no Backend (Admin) para ignorar RLS e forçar a liberação do acesso
 const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
+    process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://dummy.supabase.co',
+    process.env.SUPABASE_SERVICE_ROLE_KEY || 'dummy_role_key'
 );
 
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
+const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_dummy';
 
 export async function POST(req: Request) {
     const body = await req.text();

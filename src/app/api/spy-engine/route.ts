@@ -2,13 +2,13 @@ import { NextResponse } from 'next/server';
 import { ApifyClient } from 'apify-client';
 import OpenAI from 'openai';
 
-// Inicializa os clientes das APIs
+// Inicializa os clientes das APIs (com fallbacks vazios para evitar erro de build na Vercel)
 const apifyClient = new ApifyClient({
-    token: process.env.APIFY_API_TOKEN,
+    token: process.env.APIFY_API_TOKEN || "dummy_token_for_build",
 });
 
 const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: process.env.OPENAI_API_KEY || "dummy_key_for_build",
 });
 
 export async function POST(req: Request) {
