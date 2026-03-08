@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Search, Loader2, Copy, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Search, Loader2, Copy, CheckCircle2, AlertTriangle, Download } from "lucide-react";
 
 export default function DashboardPage() {
     const [url, setUrl] = useState("");
@@ -19,10 +19,19 @@ export default function DashboardPage() {
         setResult(null);
 
         try {
+            // Resgatando o Perfil Inteligente da Marca do Cliente
+            let brandProfile = null;
+            try {
+                const storedProfile = localStorage.getItem("spybot_brand_profile");
+                if (storedProfile) brandProfile = JSON.parse(storedProfile);
+            } catch (e) {
+                console.error(e);
+            }
+
             const response = await fetch("/api/spy-engine", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ adUrl: url }),
+                body: JSON.stringify({ adUrl: url, brandProfile }),
             });
 
             const data = await response.json();
@@ -48,8 +57,8 @@ export default function DashboardPage() {
     return (
         <div className="max-w-4xl mx-auto">
             <div className="mb-8">
-                <h2 className="text-3xl font-bold text-white mb-2">Clonador de Alta Conversão</h2>
-                <p className="text-gray-400">Insira a URL de um anúncio concorrente da Biblioteca de Anúncios do Meta para roubar a estratégia e gerar 3 copies matadoras.</p>
+                <h2 className="text-3xl font-bold text-white mb-2">Clonador & Criativo AI</h2>
+                <p className="text-gray-400">Insira a URL de um anúncio concorrente da Biblioteca do Meta para mapear a estratégia e gerar <strong>3 copies matadoras + 3 artes de design prontas</strong>.</p>
             </div>
 
             {/* Área de Input */}
@@ -122,6 +131,7 @@ export default function DashboardPage() {
                         <VariationCard
                             title="🔥 Variante 1: Foco na Dor"
                             text={result.generatedVariations?.variante1}
+                            imageUrl={result.generatedImages?.image1}
                             index={1}
                             copied={copiedIndex === 1}
                             onCopy={() => copyToClipboard(result.generatedVariations?.variante1, 1)}
@@ -131,6 +141,7 @@ export default function DashboardPage() {
                         <VariationCard
                             title="✨ Variante 2: Solução Direta"
                             text={result.generatedVariations?.variante2}
+                            imageUrl={result.generatedImages?.image2}
                             index={2}
                             copied={copiedIndex === 2}
                             onCopy={() => copyToClipboard(result.generatedVariations?.variante2, 2)}
@@ -140,6 +151,7 @@ export default function DashboardPage() {
                         <VariationCard
                             title="📖 Variante 3: Storytelling Rápido"
                             text={result.generatedVariations?.variante3}
+                            imageUrl={result.generatedImages?.image3}
                             index={3}
                             copied={copiedIndex === 3}
                             onCopy={() => copyToClipboard(result.generatedVariations?.variante3, 3)}
@@ -152,18 +164,65 @@ export default function DashboardPage() {
     );
 }
 
-function VariationCard({ title, text, index, copied, onCopy }: { title: string, text: string, index: number, copied: boolean, onCopy: () => void }) {
+function VariationCard({ title, text, imageUrl, index, copied, onCopy }: { title: string, text: string, imageUrl?: string, index: number, copied: boolean, onCopy: () => void }) {
+    const [downloading, setDownloading] = useState(false);
+
     if (!text) return null;
 
+    const handleDownloadImage = async () => {
+        if (!imageUrl) return;
+        setDownloading(true);
+        try {
+            // Usa o fetch para pular bloqueios CORS automáticos em âncoras (a href)
+            const response = await fetch(imageUrl);
+            const blob = await response.blob();
+            const blobUrl = window.URL.createObjectURL(blob);
+
+            const link = document.createElement("a");
+            link.href = blobUrl;
+            link.download = `CopySpy_Arte_Variante${index}.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(blobUrl);
+        } catch (error) {
+            console.error("Erro ao baixar. Abrindo em nova aba de fallback.", error);
+            window.open(imageUrl, '_blank');
+        } finally {
+            setDownloading(false);
+        }
+    };
+
     return (
-        <div className="bg-gradient-to-b from-[#151515] to-[#0a0a0a] border border-[#222] hover:border-green-500/50 transition-colors rounded-xl p-5 flex flex-col group relative">
+        <div className="bg-gradient-to-b from-[#151515] to-[#0a0a0a] border border-[#222] hover:border-green-500/50 transition-colors rounded-xl p-5 flex flex-col group relative overflow-hidden">
+            {imageUrl && (
+                <div className="relative w-full h-48 mb-4 rounded-lg overflow-hidden border border-[#333] shrink-0 group/image">
+                    <img src={imageUrl} alt={title} className="w-full h-full object-cover group-hover/image:scale-105 transition-transform duration-500" />
+
+                    {/* Overlay Escuro com Botão de Download (Aparece ao passar o mouse) */}
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/image:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                        <button
+                            onClick={handleDownloadImage}
+                            disabled={downloading}
+                            className="bg-green-600 hover:bg-green-500 text-white font-semibold py-2 px-4 rounded-lg flex items-center gap-2 transform translate-y-4 group-hover/image:translate-y-0 transition-transform duration-300 shadow-xl disabled:opacity-50"
+                            title="Baixar Arte para Campanhas"
+                        >
+                            {downloading ? (
+                                <><Loader2 className="animate-spin" size={18} /> Baixando...</>
+                            ) : (
+                                <><Download size={18} /> Baixar Arte</>
+                            )}
+                        </button>
+                    </div>
+                </div>
+            )}
             <h4 className="font-semibold text-gray-200 mb-3">{title}</h4>
             <div className="text-sm text-gray-400 flex-1 whitespace-pre-wrap mb-4">
                 {text}
             </div>
             <button
                 onClick={onCopy}
-                className="mt-auto flex items-center justify-center gap-2 w-full py-2 bg-[#222] group-hover:bg-green-900/20 group-hover:text-green-400 text-gray-300 rounded transition-all text-sm font-medium"
+                className="mt-auto flex flex-none items-center justify-center gap-2 w-full py-2 bg-[#222] group-hover:bg-green-900/20 group-hover:text-green-400 text-gray-300 rounded transition-all text-sm font-medium"
             >
                 {copied ? <CheckCircle2 size={16} className="text-green-500" /> : <Copy size={16} />}
                 {copied ? "Texto Copiado!" : "Copiar Copy"}
