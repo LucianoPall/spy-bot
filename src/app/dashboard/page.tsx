@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import { Search, Loader2, Copy, CheckCircle2, AlertTriangle, Download } from "lucide-react";
 import { useSearchParams } from "next/navigation";
@@ -192,6 +192,11 @@ export default function DashboardPage() {
 function VariationCard({ title, text, imageUrl, index, copied, onCopy }: { title: string, text: string | undefined, imageUrl?: string, index: number, copied: boolean, onCopy: () => void }) {
     const [downloading, setDownloading] = useState(false);
 
+    // Debug: Log da URL
+    useEffect(() => {
+        console.log(`Variante ${index} - imageUrl:`, imageUrl);
+    }, [imageUrl, index]);
+
     if (!text) return null;
 
     const handleDownloadImage = async () => {
@@ -220,9 +225,9 @@ function VariationCard({ title, text, imageUrl, index, copied, onCopy }: { title
 
     return (
         <div className="bg-gradient-to-b from-[#151515] to-[#0a0a0a] border border-[#222] hover:border-green-500/50 transition-colors rounded-xl p-5 flex flex-col group relative overflow-hidden">
-            {imageUrl && (
+            {imageUrl ? (
                 <div className="relative w-full h-48 mb-4 rounded-lg overflow-hidden border border-[#333] shrink-0 group/image">
-                    <Image src={imageUrl} alt={title} fill className="w-full h-full object-cover group-hover/image:scale-105 transition-transform duration-500" />
+                    <Image src={imageUrl} alt={title} fill className="w-full h-full object-cover group-hover/image:scale-105 transition-transform duration-500" onError={() => console.error(`Erro ao carregar imagem ${index}: ${imageUrl}`)} />
 
                     {/* Overlay Escuro com Botão de Download (Aparece ao passar o mouse) */}
                     <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/image:opacity-100 transition-opacity duration-300 flex items-center justify-center">
@@ -239,6 +244,10 @@ function VariationCard({ title, text, imageUrl, index, copied, onCopy }: { title
                             )}
                         </button>
                     </div>
+                </div>
+            ) : (
+                <div className="w-full h-48 mb-4 rounded-lg bg-[#0a0a0a] border border-dashed border-[#333] flex items-center justify-center text-gray-500 text-sm">
+                    ⚠️ Imagem não disponível (URL vazia)
                 </div>
             )}
             <h4 className="font-semibold text-gray-200 mb-3">{title}</h4>
