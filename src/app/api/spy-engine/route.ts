@@ -84,16 +84,17 @@ async function fetchWithRetry(
                     `Apify API Error: ${response.status} - ${errorText.substring(0, 200)}`
                 );
             }
-        } catch (error: any) {
-            lastError = error;
+        } catch (error: unknown) {
+            lastError = error as Error;
 
             // Verificar se é timeout ou erro de conexão (ETIMEDOUT, ECONNRESET, etc)
-            const isTimeoutError = error.name === 'AbortError' || error.code === 'ETIMEDOUT';
-            const isConnectionError = error.code === 'ECONNREFUSED' || error.code === 'ECONNRESET';
+            const errorObj = error as { name?: string; code?: string };
+            const isTimeoutError = errorObj.name === 'AbortError' || errorObj.code === 'ETIMEDOUT';
+            const isConnectionError = errorObj.code === 'ECONNREFUSED' || errorObj.code === 'ECONNRESET';
 
             if ((isTimeoutError || isConnectionError) && attempt < maxRetries - 1) {
                 console.warn(
-                    `[Apify Retry] ⚠️ Erro transitório (${error.name || error.code}) na tentativa ${attempt + 1}`
+                    `[Apify Retry] ⚠️ Erro transitório (${errorObj.name || errorObj.code}) na tentativa ${attempt + 1}`
                 );
                 const delayMs = Math.pow(2, attempt) * 1000;
                 console.log(`[Apify Retry] ⏳ Aguardando ${delayMs}ms antes da próxima tentativa...`);
@@ -156,10 +157,15 @@ export async function POST(req: Request) {
             }
 
             const hasByok = brandProfile && brandProfile.openaiKey && brandProfile.openaiKey.trim() !== "";
-            if (currentPlan === 'gratis' && currentCredits <= 0 && !hasByok) {
-                logger.error(STAGES.BILLING, 'Créditos insuficientes, acesso negado');
+
+            // Admin (dono) não tem limitação de créditos
+            const isAdmin = user?.email === process.env.NEXT_PUBLIC_ADMIN_EMAIL;
+
+            // Validação: Usuário grátis com créditos zerados precisa de BYOK ou upgrade
+            if (!isAdmin && currentPlan === 'gratis' && currentCredits <= 0 && !hasByok) {
+                logger.error(STAGES.BILLING, 'Créditos insuficientes, acesso negado para usuário');
                 return NextResponse.json({
-                    error: 'Seus créditos grátis acabaram! Assine o plano PRO ou adicione sua Chave da OpenAI para continuar.',
+                    error: 'Seus créditos grátis acabaram! Você pode: 1) Assinar o plano PRO ($97) ou 2) Adicionar sua própria Chave da OpenAI.',
                     code: 'OUT_OF_CREDITS'
                 }, { status: 403 });
             }
@@ -233,8 +239,8 @@ export async function POST(req: Request) {
                 apifyErrorMessage = "A extração retornou 0 itens (vazio). O Facebook pode ter bloqueado ou o ID é inválido.";
                 logger.warn(STAGES.APIFY_FAIL, 'Apify retornou lista vazia', { reason: apifyErrorMessage });
             }
-        } catch (scraperError: any) {
-            apifyErrorMessage = scraperError.message || String(scraperError);
+        } catch (scraperError: unknown) {
+            apifyErrorMessage = (scraperError as { message?: string } | undefined)?.message || String(scraperError);
             logger.endTimer('APIFY_EXTRACTION', STAGES.APIFY_FAIL);
             logger.error(STAGES.APIFY_FAIL, 'Erro na chamada Apify', scraperError);
         }
@@ -364,7 +370,7 @@ export async function POST(req: Request) {
                     const generatedUrl = response.data?.[0]?.url || fallbackUrl;
                     logger.success(STAGES.DALLE_SUCCESS, `Imagem ${imageNumber} gerada com sucesso`);
                     return generatedUrl;
-                } catch (imgErr: any) {
+                } catch (imgErr: unknown) {
                     logger.error(STAGES.DALLE_FAIL, `Erro ao gerar imagem ${imageNumber}`, imgErr);
                     return fallbackUrl;
                 }
@@ -413,7 +419,7 @@ export async function POST(req: Request) {
                             const publicUrl = supabaseClient.storage.from('spybot_images').getPublicUrl(fileName).data.publicUrl;
                             logger.success(STAGES.STORAGE_SUCCESS, `Imagem ${imageNumber} enviada para Storage`, { fileName });
                             return publicUrl;
-                        } catch (e: any) {
+                        } catch (e: unknown) {
                             logger.error(STAGES.STORAGE_FAIL, `Erro ao fazer download/upload imagem ${imageNumber}`, e);
                             return url;
                         }
@@ -454,7 +460,7 @@ export async function POST(req: Request) {
                 } else {
                     logger.info(STAGES.SUPABASE_INSERT, 'Usuário não autenticado, ignorando salvamento em banco de dados');
                 }
-            } catch (dbError: any) {
+            } catch (dbError: unknown) {
                 logger.error(STAGES.SUPABASE_FAIL, 'Erro ao salvar no histórico/storage (ignorado para não travar UI)', dbError);
             }
 
@@ -476,8 +482,10 @@ export async function POST(req: Request) {
                 },
                 logs: logger.exportAsJSON()
             });
-        } catch (openaiError: any) {
+        } catch (openaiError: unknown) {
             logger.error(STAGES.OPENAI_FAIL, 'Erro na chamada OpenAI', openaiError);
+
+            const errorMessage = (openaiError as { message?: string } | undefined)?.message || String(openaiError);
 
             // Em vez de travar a tela em vermelho, devolvemos a resposta da OpenAI dentro das Copys!
             return NextResponse.json({
@@ -487,7 +495,7 @@ export async function POST(req: Request) {
                     image: adImageUrl
                 },
                 generatedVariations: {
-                    variante1: `(ERRO NA SUA CONTA OPENAI) Ocorreu o seguinte bloqueio na sua chave de acesso: ${openaiError.message}`,
+                    variante1: `(ERRO NA SUA CONTA OPENAI) Ocorreu o seguinte bloqueio na sua chave de acesso: ${errorMessage}`,
                     variante2: `(DICA DE SOLUÇÃO) Geralmente este erro da OpenAI ('You exceeded your current quota' ou 'Incorrect API Key') significa que o seu cartão de crédito não foi cadastrado no site da OpenAI ou a conta não possui créditos pré-pagos (Mínimo $5).`,
                     variante3: `(DEMO FUNCIONAL) Independentemente da sua conta OpenAI, O seu SaaS está perfeitamente no Ar, responsivo e conseguindo conectar na nuvem. Recarregue os créditos da OpenAI e a magia acontece aqui!`
                 },
@@ -495,13 +503,14 @@ export async function POST(req: Request) {
             });
         }
 
-    } catch (error: any) {
-        const totalTime = logger.endTimer('TOTAL_REQUEST', STAGES.ERROR_CRITICAL);
+    } catch (error: unknown) {
+        logger.endTimer('TOTAL_REQUEST', STAGES.ERROR_CRITICAL);
         logger.error(STAGES.ERROR_CRITICAL, 'Erro catastrófico na requisição', error);
 
+        const errorObject = error instanceof Error ? error : new Error(String(error));
         return NextResponse.json({
             error: 'Erro catastrófico no servidor.',
-            message: error.message || String(error),
+            message: errorObject.message || String(error),
             logs: logger.exportAsJSON()
         }, { status: 500 });
     }
