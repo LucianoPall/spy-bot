@@ -1,12 +1,13 @@
 import { createClient } from "@/utils/supabase/server";
 import { Clock, History as HistoryIcon, Zap, Target, Calendar } from "lucide-react";
+import { redirect } from "next/navigation";
 import HistoryGallery from "@/components/HistoryGallery";
 
 export default async function HistoryPage() {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
-    if (!user) return null;
+    if (!user) redirect("/login");
 
     const { data: clones, error } = await supabase
         .from("spybot_generations")
