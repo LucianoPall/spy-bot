@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Save, UserCircle2, Building2, Target, MessageSquare, Loader2, Key, Crown, Zap } from "lucide-react";
+import { Save, UserCircle2, Building2, Target, MessageSquare, Loader2, Key, Crown, Zap, AlertCircle } from "lucide-react";
 
 const SUGGESTED_NICHES = [
     "Estética Facial",
@@ -222,21 +222,17 @@ export default function SettingsPage() {
                     />
                 </div>
 
-                {/* Chave da OpenAI - Apenas para PRO ou quando créditos gratuitos acabam */}
-                {subscription && (subscription.plan === 'pro' || subscription.credits_remaining === 0) && (
+                {/* Chave da OpenAI - APENAS para plano PRO */}
+                {subscription && subscription.plan === 'pro' && (
                     <div className="space-y-2 mt-6 p-4 border border-green-500/20 bg-green-900/10 rounded-xl relative overflow-hidden">
                         <div className="absolute top-0 right-0 p-2 bg-green-500/20 text-green-400 text-xs font-bold rounded-bl-lg">
-                            Opção Avançada
+                            Recurso PRO
                         </div>
                         <label className="text-sm font-medium text-green-400 flex items-center gap-2">
-                            <Key size={16} /> Sua Própria Chave da API OpenAI
+                            <Key size={16} /> Sua Própria Chave da API OpenAI (Opcional)
                         </label>
                         <p className="text-xs text-green-500/70 mb-2">
-                            {subscription.credits_remaining === 0 ? (
-                                <>Seus créditos grátis acabaram. Adicione sua chave OpenAI para continuar usando o SaaS. A chave fica salva apenas no seu navegador.</>
-                            ) : (
-                                <>Se você usa muito o sistema, insira sua chave sk-* aqui para pagar direto para a OpenAI. A chave fica salva apenas no seu navegador.</>
-                            )}
+                            Se você usa muito o sistema, insira sua chave sk-* aqui para pagar direto para a OpenAI e não consumir os créditos inclusos no PRO. A chave fica salva apenas no seu navegador.
                         </p>
                         <input
                             type="password"
@@ -246,6 +242,21 @@ export default function SettingsPage() {
                             placeholder="sk-proj-..."
                             className="w-full bg-[#050505] border border-green-500/40 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-colors font-mono text-sm"
                         />
+                    </div>
+                )}
+
+                {/* Aviso para usuários grátis */}
+                {subscription && subscription.plan === 'gratis' && subscription.credits_remaining === 0 && (
+                    <div className="space-y-2 mt-6 p-4 border border-yellow-500/20 bg-yellow-900/10 rounded-xl">
+                        <div className="flex items-start gap-3">
+                            <AlertCircle className="text-yellow-500 mt-1 shrink-0" size={20} />
+                            <div>
+                                <p className="text-sm font-medium text-yellow-400 mb-1">Seus créditos grátis acabaram!</p>
+                                <p className="text-xs text-yellow-300/80">
+                                    Assine o plano PRO ($97) para continuar usando. Após o upgrade, você poderá adicionar sua própria Chave da OpenAI aqui.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                 )}
 

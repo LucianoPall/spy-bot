@@ -161,11 +161,11 @@ export async function POST(req: Request) {
             // Admin (dono) não tem limitação de créditos
             const isAdmin = user?.email === process.env.NEXT_PUBLIC_ADMIN_EMAIL;
 
-            // Validação: Usuário grátis com créditos zerados precisa de BYOK ou upgrade
+            // Validação: Usuário grátis com créditos zerados DEVE assinar PRO
             if (!isAdmin && currentPlan === 'gratis' && currentCredits <= 0 && !hasByok) {
                 logger.error(STAGES.BILLING, 'Créditos insuficientes, acesso negado para usuário');
                 return NextResponse.json({
-                    error: 'Seus créditos grátis acabaram! Você pode: 1) Assinar o plano PRO ($97) ou 2) Adicionar sua própria Chave da OpenAI.',
+                    error: 'Seus créditos grátis acabaram! 😢 Você precisa assinar o plano PRO ($97) para continuar usando o Spy Bot. Após o upgrade, você poderá adicionar sua própria Chave da OpenAI se desejar.',
                     code: 'OUT_OF_CREDITS'
                 }, { status: 403 });
             }
