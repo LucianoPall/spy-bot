@@ -222,27 +222,32 @@ export default function SettingsPage() {
                     />
                 </div>
 
-                {/* Chave da OpenAI */}
-                <div className="space-y-2 mt-6 p-4 border border-green-500/20 bg-green-900/10 rounded-xl relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-2 bg-green-500/20 text-green-400 text-xs font-bold rounded-bl-lg">
-                        Opção Avançada
+                {/* Chave da OpenAI - Apenas para PRO ou quando créditos gratuitos acabam */}
+                {subscription && (subscription.plan === 'pro' || subscription.credits_remaining === 0) && (
+                    <div className="space-y-2 mt-6 p-4 border border-green-500/20 bg-green-900/10 rounded-xl relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-2 bg-green-500/20 text-green-400 text-xs font-bold rounded-bl-lg">
+                            Opção Avançada
+                        </div>
+                        <label className="text-sm font-medium text-green-400 flex items-center gap-2">
+                            <Key size={16} /> Sua Própria Chave da API OpenAI
+                        </label>
+                        <p className="text-xs text-green-500/70 mb-2">
+                            {subscription.credits_remaining === 0 ? (
+                                <>Seus créditos grátis acabaram. Adicione sua chave OpenAI para continuar usando o SaaS. A chave fica salva apenas no seu navegador.</>
+                            ) : (
+                                <>Se você usa muito o sistema, insira sua chave sk-* aqui para pagar direto para a OpenAI. A chave fica salva apenas no seu navegador.</>
+                            )}
+                        </p>
+                        <input
+                            type="password"
+                            name="openaiKey"
+                            value={profile.openaiKey}
+                            onChange={handleChange}
+                            placeholder="sk-proj-..."
+                            className="w-full bg-[#050505] border border-green-500/40 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-colors font-mono text-sm"
+                        />
                     </div>
-                    <label className="text-sm font-medium text-green-400 flex items-center gap-2">
-                        <Key size={16} /> Sua Própria Chave da API OpenAI (Opcional)
-                    </label>
-                    <p className="text-xs text-green-500/70 mb-2">
-                        Se você usa muito o sistema, insira sua chave sk-* aqui para pagar direto para a OpenAI e não consumir o limite do SaaS.
-                        A chave fica salva apenas no seu navegador.
-                    </p>
-                    <input
-                        type="password"
-                        name="openaiKey"
-                        value={profile.openaiKey}
-                        onChange={handleChange}
-                        placeholder="sk-proj-..."
-                        className="w-full bg-[#050505] border border-green-500/40 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-colors font-mono text-sm"
-                    />
-                </div>
+                )}
 
                 <div className="pt-4 border-t border-[#222] flex items-center justify-between">
                     <div className="text-sm">
