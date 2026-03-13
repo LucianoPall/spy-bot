@@ -1,0 +1,91 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Zap, Lightbulb, Target } from "lucide-react";
+
+interface KPIData {
+  credits: number;
+  totalClones: number;
+  niche: string;
+}
+
+export default function KPICards() {
+  const [kpiData, setKpiData] = useState<KPIData>({
+    credits: 0,
+    totalClones: 0,
+    niche: "Não configurado",
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchKPIData = async () => {
+      try {
+        const response = await fetch("/api/kpi-data");
+        if (response.ok) {
+          const data = await response.json();
+          setKpiData(data);
+        }
+      } catch (error) {
+        console.error("Failed to fetch KPI data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    // Also read niche from localStorage
+    try {
+      const profile = localStorage.getItem("spybot_brand_profile");
+      if (profile) {
+        const parsed = JSON.parse(profile);
+        setKpiData((prev) => ({
+          ...prev,
+          niche: parsed.niche || "Não configurado",
+        }));
+      }
+    } catch (e) {
+      console.error("Failed to parse profile", e);
+    }
+
+    fetchKPIData();
+  }, []);
+
+  return (
+    <div className="grid md:grid-cols-3 gap-4 mb-8">
+      {/* Credits Card */}
+      <div className="bg-[#111] border border-[#222] rounded-lg p-6 space-y-3">
+        <div className="flex items-center gap-2">
+          <Zap className="text-green-500" size={20} />
+          <span className="text-sm font-medium text-gray-400">Créditos Restantes</span>
+        </div>
+        <div className="text-3xl font-bold text-white">
+          {loading ? "-" : kpiData.credits}
+        </div>
+        <p className="text-xs text-gray-500">Extrações livres disponíveis</p>
+      </div>
+
+      {/* Total Clones Card */}
+      <div className="bg-[#111] border border-[#222] rounded-lg p-6 space-y-3">
+        <div className="flex items-center gap-2">
+          <Lightbulb className="text-green-500" size={20} />
+          <span className="text-sm font-medium text-gray-400">Total de Clones</span>
+        </div>
+        <div className="text-3xl font-bold text-white">
+          {loading ? "-" : kpiData.totalClones}
+        </div>
+        <p className="text-xs text-gray-500">Anúncios clonados até agora</p>
+      </div>
+
+      {/* Active Niche Card */}
+      <div className="bg-[#111] border border-[#222] rounded-lg p-6 space-y-3">
+        <div className="flex items-center gap-2">
+          <Target className="text-green-500" size={20} />
+          <span className="text-sm font-medium text-gray-400">Nicho Ativo</span>
+        </div>
+        <div className="text-lg font-bold text-white truncate">
+          {loading ? "-" : kpiData.niche}
+        </div>
+        <p className="text-xs text-gray-500">Seu perfil de mercado</p>
+      </div>
+    </div>
+  );
+}
