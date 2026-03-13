@@ -404,8 +404,17 @@ export async function POST(req: Request) {
                             return url;
                         }
                         try {
-                            const imgRes = await fetch(url);
+                            logger.info(STAGES.STORAGE_UPLOAD, `Iniciando upload da imagem ${imageNumber}`, { url: url.substring(0, 50) });
+                            const imgRes = await fetch(url, { timeout: 15000 });
+
+                            if (!imgRes.ok) {
+                                logger.warn(STAGES.STORAGE_FAIL, `Imagem ${imageNumber}: fetch retornou status ${imgRes.status}, usando URL original`);
+                                return url;
+                            }
+
                             const blob = await imgRes.blob();
+                            logger.info(STAGES.STORAGE_UPLOAD, `Imagem ${imageNumber} baixada: ${blob.size} bytes`);
+
                             const fileName = `${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
 
                             const { error } = await supabaseClient.storage
@@ -420,7 +429,8 @@ export async function POST(req: Request) {
                             logger.success(STAGES.STORAGE_SUCCESS, `Imagem ${imageNumber} enviada para Storage`, { fileName });
                             return publicUrl;
                         } catch (e: unknown) {
-                            logger.error(STAGES.STORAGE_FAIL, `Erro ao fazer download/upload imagem ${imageNumber}`, e);
+                            logger.error(STAGES.STORAGE_FAIL, `Erro ao fazer download/upload imagem ${imageNumber}: ${String(e)}`);
+                            logger.warn(STAGES.STORAGE_UPLOAD, `Imagem ${imageNumber}: usando URL original do DALL-E como fallback`);
                             return url;
                         }
                     };
