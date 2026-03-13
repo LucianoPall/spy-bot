@@ -66,7 +66,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                 <>
                     <div className="w-full aspect-video bg-[#0a0a0a] rounded-lg mb-4 overflow-hidden border border-[#1a1a1a] relative group-hover:border-green-500/20 transition-colors">
                         {clone.image1 ? (
-                            <Image src={clone.image1} alt="Thumbnail do Criativo 1" fill className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                            <Image src={`/api/proxy-image?url=${encodeURIComponent(clone.image1)}`} alt="Thumbnail do Criativo 1" fill className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                         ) : (
                             <div className="w-full h-full flex items-center justify-center text-gray-700"><ImageIcon size={32} /></div>
                         )}
@@ -102,7 +102,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                         <div className="bg-[#0a0a0a] border border-[#1a1a1a] p-4 rounded-xl flex flex-col h-full hover:border-[#333] transition-colors">
                             <h4 className="font-bold text-green-400 mb-4 text-sm flex items-center gap-2">🔥 Dor Extrema <span className="text-gray-600 text-[10px] bg-black px-2 py-0.5 rounded uppercase">Feed 1:1</span></h4>
                             <div className="w-full aspect-square bg-[#050505] rounded-lg mb-4 overflow-hidden border border-[#222] relative">
-                                {clone.image1 && <Image src={clone.image1} alt="V1" fill className="w-full h-full object-cover" />}
+                                {clone.image1 && <Image src={`/api/proxy-image?url=${encodeURIComponent(clone.image1)}`} alt="V1" fill className="w-full h-full object-cover" />}
                             </div>
                             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
                                 <p className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">{clone.variante1}</p>
@@ -111,7 +111,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                                 {copiedContent === 'v1' ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
                                 {copiedContent === 'v1' ? 'Copiado para Área de Transferência' : 'Copiar Copywriting'}
                             </button>
-                            <a href={clone.image1} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
+                            <a href={`/api/proxy-image?url=${encodeURIComponent(clone.image1)}`} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
                                 Abrir Imagem em Alta
                             </a>
                         </div>
@@ -120,7 +120,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                         <div className="bg-[#0a0a0a] border border-[#1a1a1a] p-4 rounded-xl flex flex-col h-full hover:border-[#333] transition-colors">
                             <h4 className="font-bold text-blue-400 mb-4 text-sm flex items-center gap-2">💡 Solução Direta <span className="text-gray-600 text-[10px] bg-black px-2 py-0.5 rounded uppercase">Feed 1:1</span></h4>
                             <div className="w-full aspect-square bg-[#050505] rounded-lg mb-4 overflow-hidden border border-[#222] relative">
-                                {clone.image2 && <Image src={clone.image2} alt="V2" fill className="w-full h-full object-cover" />}
+                                {clone.image2 && <Image src={`/api/proxy-image?url=${encodeURIComponent(clone.image2)}`} alt="V2" fill className="w-full h-full object-cover" />}
                             </div>
                             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
                                 <p className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">{clone.variante2}</p>
@@ -129,7 +129,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                                 {copiedContent === 'v2' ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
                                 {copiedContent === 'v2' ? 'Copiado para Área de Transferência' : 'Copiar Copywriting'}
                             </button>
-                            <a href={clone.image2} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
+                            <a href={`/api/proxy-image?url=${encodeURIComponent(clone.image2)}`} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
                                 Abrir Imagem em Alta
                             </a>
                         </div>
@@ -138,7 +138,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                         <div className="bg-[#0a0a0a] border border-[#1a1a1a] p-4 rounded-xl flex flex-col h-full hover:border-[#333] transition-colors">
                             <h4 className="font-bold text-purple-400 mb-4 text-sm flex items-center gap-2">📖 Storytelling <span className="text-gray-600 text-[10px] bg-black px-2 py-0.5 rounded uppercase">Stories 9:16</span></h4>
                             <div className="w-full aspect-[9/16] bg-[#050505] rounded-lg mb-4 overflow-hidden border border-[#222] relative">
-                                {clone.image3 && <Image src={clone.image3} alt="V3" fill className="w-full h-full object-cover" />}
+                                {clone.image3 && <Image src={`/api/proxy-image?url=${encodeURIComponent(clone.image3)}`} alt="V3" fill className="w-full h-full object-cover" />}
                             </div>
                             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
                                 <p className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">{clone.variante3}</p>
@@ -147,7 +147,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                                 {copiedContent === 'v3' ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
                                 {copiedContent === 'v3' ? 'Copiado para Área de Transferência' : 'Copiar Copywriting'}
                             </button>
-                            <a href={clone.image3} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
+                            <a href={`/api/proxy-image?url=${encodeURIComponent(clone.image3)}`} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
                                 Abrir Imagem em Alta
                             </a>
                         </div>
