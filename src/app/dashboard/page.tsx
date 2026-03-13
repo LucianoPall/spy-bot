@@ -1,14 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import Image from "next/image";
 import { Search, Loader2, Copy, CheckCircle2, AlertTriangle, Download } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import ActiveProfileBanner from "@/components/ActiveProfileBanner";
+import KPICards from "@/components/KPICards";
+
+interface GenerationResult {
+    originalAd?: { copy?: string; image?: string };
+    generatedVariations?: { variante1?: string; variante2?: string; variante3?: string };
+    generatedImages?: { image1?: string; image2?: string; image3?: string };
+}
 
 export default function DashboardPage() {
+    const searchParams = useSearchParams();
     const [url, setUrl] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
-    const [result, setResult] = useState<any>(null);
+    const [result, setResult] = useState<GenerationResult | null>(null);
     const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+    useEffect(() => {
+        const urlParam = searchParams.get("url");
+        if (urlParam) {
+            setUrl(decodeURIComponent(urlParam));
+        }
+    }, [searchParams]);
 
     const handleCloning = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -41,14 +59,15 @@ export default function DashboardPage() {
             }
 
             setResult(data);
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            setError((err as { message?: string } | undefined)?.message || 'Erro desconhecido');
         } finally {
             setLoading(false);
         }
     };
 
-    const copyToClipboard = (text: string, index: number) => {
+    const copyToClipboard = (text: string | undefined, index: number) => {
+        if (!text) return;
         navigator.clipboard.writeText(text);
         setCopiedIndex(index);
         setTimeout(() => setCopiedIndex(null), 2000);
@@ -56,6 +75,12 @@ export default function DashboardPage() {
 
     return (
         <div className="max-w-4xl mx-auto">
+            {/* Active Profile Banner */}
+            <ActiveProfileBanner />
+
+            {/* KPI Cards */}
+            <KPICards />
+
             <div className="mb-8">
                 <h2 className="text-3xl font-bold text-white mb-2">Clonador & Criativo AI</h2>
                 <p className="text-gray-400">Insira a URL de um anúncio concorrente da Biblioteca do Meta para mapear a estratégia e gerar <strong>3 copies matadoras + 3 artes de design prontas</strong>.</p>
@@ -105,7 +130,7 @@ export default function DashboardPage() {
                         <div className="bg-[#111] border border-[#222] rounded-xl p-6">
                             <h3 className="text-lg font-semibold text-gray-300 mb-4 border-b border-[#222] pb-2">Imagem/Thumbnail Extraída</h3>
                             {result.originalAd?.image ? (
-                                <img src={result.originalAd.image} alt="Anúncio Base" className="w-full rounded-lg border border-[#333]" />
+                                <Image src={result.originalAd.image} alt="Anúncio Base" width={600} height={400} className="w-full rounded-lg border border-[#333]" />
                             ) : (
                                 <div className="h-48 bg-[#0a0a0a] rounded-lg flex items-center justify-center border border-dashed border-[#333] text-gray-600">
                                     Nenhuma imagem encontrada
@@ -164,7 +189,7 @@ export default function DashboardPage() {
     );
 }
 
-function VariationCard({ title, text, imageUrl, index, copied, onCopy }: { title: string, text: string, imageUrl?: string, index: number, copied: boolean, onCopy: () => void }) {
+function VariationCard({ title, text, imageUrl, index, copied, onCopy }: { title: string, text: string | undefined, imageUrl?: string, index: number, copied: boolean, onCopy: () => void }) {
     const [downloading, setDownloading] = useState(false);
 
     if (!text) return null;
@@ -197,7 +222,7 @@ function VariationCard({ title, text, imageUrl, index, copied, onCopy }: { title
         <div className="bg-gradient-to-b from-[#151515] to-[#0a0a0a] border border-[#222] hover:border-green-500/50 transition-colors rounded-xl p-5 flex flex-col group relative overflow-hidden">
             {imageUrl && (
                 <div className="relative w-full h-48 mb-4 rounded-lg overflow-hidden border border-[#333] shrink-0 group/image">
-                    <img src={imageUrl} alt={title} className="w-full h-full object-cover group-hover/image:scale-105 transition-transform duration-500" />
+                    <Image src={imageUrl} alt={title} fill className="w-full h-full object-cover group-hover/image:scale-105 transition-transform duration-500" />
 
                     {/* Overlay Escuro com Botão de Download (Aparece ao passar o mouse) */}
                     <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/image:opacity-100 transition-opacity duration-300 flex items-center justify-center">
