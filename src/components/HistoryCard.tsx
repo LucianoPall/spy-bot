@@ -111,9 +111,11 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                                 {copiedContent === 'v1' ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
                                 {copiedContent === 'v1' ? 'Copiado para Área de Transferência' : 'Copiar Copywriting'}
                             </button>
-                            <a href={`/api/proxy-image?url=${encodeURIComponent(clone.image1)}`} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
-                                Abrir Imagem em Alta
-                            </a>
+                            {clone.image1 && (
+                                <a href={`/api/proxy-image?url=${encodeURIComponent(clone.image1)}`} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
+                                    Abrir Imagem em Alta
+                                </a>
+                            )}
                         </div>
 
                         {/* Variante 2 */}
@@ -129,9 +131,11 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                                 {copiedContent === 'v2' ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
                                 {copiedContent === 'v2' ? 'Copiado para Área de Transferência' : 'Copiar Copywriting'}
                             </button>
-                            <a href={`/api/proxy-image?url=${encodeURIComponent(clone.image2)}`} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
-                                Abrir Imagem em Alta
-                            </a>
+                            {clone.image2 && (
+                                <a href={`/api/proxy-image?url=${encodeURIComponent(clone.image2)}`} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
+                                    Abrir Imagem em Alta
+                                </a>
+                            )}
                         </div>
 
                         {/* Variante 3 */}
@@ -147,9 +151,11 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                                 {copiedContent === 'v3' ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
                                 {copiedContent === 'v3' ? 'Copiado para Área de Transferência' : 'Copiar Copywriting'}
                             </button>
-                            <a href={`/api/proxy-image?url=${encodeURIComponent(clone.image3)}`} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
-                                Abrir Imagem em Alta
-                            </a>
+                            {clone.image3 && (
+                                <a href={`/api/proxy-image?url=${encodeURIComponent(clone.image3)}`} download target="_blank" rel="noopener noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 text-green-500/70 hover:text-green-400 text-xs py-1 transition-colors">
+                                    Abrir Imagem em Alta
+                                </a>
+                            )}
                         </div>
                     </div>
                 </div>

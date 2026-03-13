@@ -145,7 +145,7 @@ export async function POST(req: Request) {
         let currentCredits = 5;
 
         if (user) {
-            logger.info(STAGES.BILLING, 'Usuário autenticado', { userId: user.id });
+            logger.info(STAGES.BILLING, 'Usuário autenticado', { userId: user.id, userEmail: user.email });
             const { data: sub } = await supabase.from('spybot_subscriptions').select('*').eq('user_id', user.id).single();
             if (!sub) {
                 logger.info(STAGES.BILLING, 'Primeira requisição do usuário, criando subscription padrão');
@@ -159,15 +159,30 @@ export async function POST(req: Request) {
             const hasByok = brandProfile && brandProfile.openaiKey && brandProfile.openaiKey.trim() !== "";
 
             // Admin (dono) não tem limitação de créditos
-            const isAdmin = user?.email === process.env.NEXT_PUBLIC_ADMIN_EMAIL;
+            const adminEmailFromEnv = process.env.NEXT_PUBLIC_ADMIN_EMAIL?.trim();
+            const userEmail = user?.email?.trim();
+            const isAdmin = userEmail === adminEmailFromEnv;
 
-            // Validação: Usuário grátis com créditos zerados DEVE assinar PRO
+            logger.info(STAGES.BILLING, '🔍 DEBUG ADMIN CHECK', {
+                userEmail,
+                adminEmailFromEnv,
+                isAdmin,
+                currentPlan,
+                currentCredits,
+                hasByok
+            });
+
+            // Validação: Usuário grátis com créditos zerados DEVE assinar PRO (ADMIN IGNORA ISSO)
             if (!isAdmin && currentPlan === 'gratis' && currentCredits <= 0 && !hasByok) {
-                logger.error(STAGES.BILLING, 'Créditos insuficientes, acesso negado para usuário');
+                logger.error(STAGES.BILLING, '❌ Créditos insuficientes, acesso negado para usuário');
                 return NextResponse.json({
                     error: 'Seus créditos grátis acabaram! 😢 Você precisa assinar o plano PRO ($97) para continuar usando o Spy Bot. Após o upgrade, você poderá adicionar sua própria Chave da OpenAI se desejar.',
                     code: 'OUT_OF_CREDITS'
                 }, { status: 403 });
+            }
+
+            if (isAdmin) {
+                logger.success(STAGES.BILLING, '✅ ADMIN DETECTADO - Acesso ilimitado liberado!');
             }
         } else {
             logger.warn(STAGES.BILLING, 'Usuário não autenticado, usando defaults');
@@ -404,33 +419,68 @@ export async function POST(req: Request) {
                             return url;
                         }
                         try {
-                            logger.info(STAGES.STORAGE_UPLOAD, `Iniciando upload da imagem ${imageNumber}`, { url: url.substring(0, 50) });
-                            const imgRes = await fetch(url, { timeout: 15000 });
+                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Iniciando upload`, { urlDomain: url.split('/')[2] });
+
+                            // Usar AbortController para timeout correto no fetch
+                            const controller = new AbortController();
+                            const timeoutId = setTimeout(() => controller.abort(), 15000);
+                            const imgRes = await fetch(url, { signal: controller.signal });
+                            clearTimeout(timeoutId);
+
+                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Fetch status: ${imgRes.status}`);
 
                             if (!imgRes.ok) {
-                                logger.warn(STAGES.STORAGE_FAIL, `Imagem ${imageNumber}: fetch retornou status ${imgRes.status}, usando URL original`);
+                                logger.warn(STAGES.STORAGE_FAIL, `[IMAGEM ${imageNumber}] Fetch falhou com status ${imgRes.status}`);
                                 return url;
                             }
 
                             const blob = await imgRes.blob();
-                            logger.info(STAGES.STORAGE_UPLOAD, `Imagem ${imageNumber} baixada: ${blob.size} bytes`);
+                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Blob criado: ${blob.size} bytes, tipo: ${blob.type}`);
 
                             const fileName = `${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
+                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Nome do arquivo: ${fileName}`);
 
-                            const { error } = await supabaseClient.storage
+                            const uploadResponse = await supabaseClient.storage
                                 .from('spybot_images')
                                 .upload(fileName, blob, { contentType: 'image/png', upsert: true });
 
+                            const { data, error } = uploadResponse;
+
+                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Resposta do upload:`, {
+                                hasError: !!error,
+                                hasData: !!data,
+                                errorMessage: error?.message || 'nenhum',
+                                errorStatus: error?.status || 'nenhum'
+                            });
+
                             if (error) {
-                                logger.error(STAGES.STORAGE_FAIL, `Erro no upload da imagem ${imageNumber}`, error);
+                                logger.error(STAGES.STORAGE_FAIL, `❌ [IMAGEM ${imageNumber}] ERRO NO UPLOAD`, {
+                                    errorMessage: error.message,
+                                    errorStatus: error.status,
+                                    errorStatusCode: error.statusCode,
+                                    fileName,
+                                    blobSize: blob.size,
+                                    fullError: JSON.stringify(error)
+                                });
                                 return url;
                             }
-                            const publicUrl = supabaseClient.storage.from('spybot_images').getPublicUrl(fileName).data.publicUrl;
-                            logger.success(STAGES.STORAGE_SUCCESS, `Imagem ${imageNumber} enviada para Storage`, { fileName });
-                            return publicUrl;
+
+                            const urlResponse = supabaseClient.storage.from('spybot_images').getPublicUrl(fileName);
+                            const publicUrl = urlResponse.data?.publicUrl;
+
+                            logger.success(STAGES.STORAGE_SUCCESS, `✅ [IMAGEM ${imageNumber}] SALVA COM SUCESSO`, {
+                                fileName,
+                                publicUrlStart: publicUrl?.substring(0, 80) || 'ERRO'
+                            });
+
+                            return publicUrl || url;
                         } catch (e: unknown) {
-                            logger.error(STAGES.STORAGE_FAIL, `Erro ao fazer download/upload imagem ${imageNumber}: ${String(e)}`);
-                            logger.warn(STAGES.STORAGE_UPLOAD, `Imagem ${imageNumber}: usando URL original do DALL-E como fallback`);
+                            const errorMsg = e instanceof Error ? e.message : String(e);
+                            const errorStack = (e instanceof Error ? e.stack : '') || '';
+                            logger.error(STAGES.STORAGE_FAIL, `❌ [IMAGEM ${imageNumber}] EXCEÇÃO`, {
+                                errorMessage: errorMsg,
+                                errorStack: errorStack.substring(0, 200)
+                            });
                             return url;
                         }
                     };
