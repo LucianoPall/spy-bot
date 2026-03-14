@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
     localPatterns: [
       {
         pathname: "/api/proxy-image",
-        search: "",
+        search: "**",  // Aceita qualquer query string
       },
     ],
     remotePatterns: [
@@ -14,6 +14,13 @@ const nextConfig: NextConfig = {
         protocol: "http",
         hostname: "localhost",
         port: "3000",
+        pathname: "/api/proxy-image**",
+        search: "**",
+      },
+      {
+        protocol: "http",
+        hostname: "localhost",
+        port: "3001",  // Adicionar porta 3001 também
         pathname: "/api/proxy-image**",
         search: "**",
       },
