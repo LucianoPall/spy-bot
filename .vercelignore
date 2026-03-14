@@ -1,0 +1,16 @@
+.git
+.gitignore
+.env.local
+.env.*.local
+node_modules
+*.test.ts
+*.test.js
+vitest.config.ts
+coverage
+.DS_Store
+*.md
+!README.md
+.next/cache
+.turbo
+dist
+build

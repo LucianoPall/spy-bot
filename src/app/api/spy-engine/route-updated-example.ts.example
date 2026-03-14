@@ -1,0 +1,161 @@
+/**
+ * EXEMPLO DE INTEGRAÇÃO - route.ts ATUALIZADO
+ *
+ * Este arquivo mostra como integrar as funções de validação e refund
+ * ao seu route.ts atual sem quebrar a lógica existente.
+ *
+ * PASSOS PARA IMPLEMENTAR:
+ * 1. Importe as funções no topo de route.ts
+ * 2. Adicione validação logo após receber adUrl
+ * 3. Adicione chamadas de refund nos catch blocks
+ * 4. Certifique-se que supabase_logs existe no banco
+ */
+
+import { NextResponse } from 'next/server';
+import { validateFacebookAdUrl, refundOnApifyFailure, refundOnOpenAIFailure, refundOnDALLEFailure } from './validation-refund';
+import { logger, STAGES } from './logger';
+
+// ============================================
+// SEÇÃO 1: VALIDAÇÃO DE URL (após linha 125)
+// ============================================
+
+export async function POST(req: Request) {
+    logger.clear();
+    logger.startTimer('TOTAL_REQUEST');
+
+    try {
+        const { adUrl, brandProfile } = await req.json();
+        logger.info(STAGES.START, 'URL recebida', { url: adUrl?.substring(0, 80), hasBrandProfile: !!brandProfile });
+
+        // ✅ ADIÇÃO: Validar URL Facebook
+        if (!adUrl) {
+            logger.error(STAGES.VALIDATION, 'URL do anúncio não fornecida');
+            return NextResponse.json({ error: 'URL do anúncio não fornecida.' }, { status: 400 });
+        }
+
+        // ✅ NOVA VALIDAÇÃO: Verificar se é URL válida do Facebook
+        const urlValidation = validateFacebookAdUrl(adUrl);
+        if (!urlValidation.valid) {
+            logger.error(STAGES.VALIDATION, 'URL inválida', { error: urlValidation.error });
+            return NextResponse.json({
+                error: 'URL inválida',
+                details: urlValidation.error,
+                acceptedDomains: [
+                    'facebook.com/ads/library/...',
+                    'ads.facebook.com/manage/...',
+                    'business.facebook.com/...',
+                    'm.facebook.com/...'
+                ]
+            }, { status: 400 });
+        }
+
+        if (!process.env.APIFY_API_TOKEN || !process.env.OPENAI_API_KEY) {
+            logger.error(STAGES.VALIDATION, 'Chaves de API ausentes no servidor');
+            return NextResponse.json({ error: 'Chaves de API ausentes no servidor.' }, { status: 500 });
+        }
+
+        logger.success(STAGES.VALIDATION, 'URL e chaves validadas');
+
+        // ... resto do código continua igual até Apify ...
+
+        // ============================================
+        // SEÇÃO 2: CATCH BLOCK APIFY (após linha 240)
+        // ============================================
+
+        } catch (scraperError: any) {
+            apifyErrorMessage = scraperError.message || String(scraperError);
+            logger.endTimer('APIFY_EXTRACTION', STAGES.APIFY_FAIL);
+            logger.error(STAGES.APIFY_FAIL, 'Erro na chamada Apify', scraperError);
+
+            // ✅ ADIÇÃO: Reembolsar crédito se Apify falhar completamente
+            if (user) {
+                const refundResult = await refundOnApifyFailure(user.id, scraperError.message);
+                logger.info(STAGES.BILLING_REFUND, 'Refund processado após falha Apify', { refundResult });
+            }
+        }
+
+        // ... resto do código continua igual até OpenAI ...
+
+        // ============================================
+        // SEÇÃO 3: CATCH BLOCK OPENAI (linha 479)
+        // ============================================
+
+        } catch (openaiError: any) {
+            logger.error(STAGES.OPENAI_FAIL, 'Erro na chamada OpenAI', openaiError);
+
+            // ✅ ADIÇÃO: Reembolsar crédito se OpenAI falhar
+            if (user && !usingByok) {
+                // Só reembolsa se NÃO estiver usando chave customizada do cliente
+                const refundResult = await refundOnOpenAIFailure(user.id, openaiError.message);
+                logger.info(STAGES.BILLING_REFUND, 'Refund processado após falha OpenAI', { refundResult });
+            }
+
+            // Em vez de travar a tela em vermelho, devolvemos a resposta da OpenAI dentro das Copys!
+            return NextResponse.json({
+                success: true,
+                originalAd: {
+                    copy: originalCopy,
+                    image: adImageUrl
+                },
+                generatedVariations: {
+                    variante1: `(ERRO NA SUA CONTA OPENAI) Ocorreu o seguinte bloqueio na sua chave de acesso: ${openaiError.message}`,
+                    variante2: `(DICA DE SOLUÇÃO) Geralmente este erro da OpenAI ('You exceeded your current quota' ou 'Incorrect API Key') significa que o seu cartão de crédito não foi cadastrado no site da OpenAI ou a conta não possui créditos pré-pagos (Mínimo $5).`,
+                    variante3: `(DEMO FUNCIONAL) Independentemente da sua conta OpenAI, O seu SaaS está perfeitamente no Ar, responsivo e conseguindo conectar na nuvem. Recarregue os créditos da OpenAI e a magia acontece aqui!`
+                },
+                logs: logger.exportAsJSON()
+            });
+        }
+
+        // ============================================
+        // SEÇÃO 4: CATCH BLOCK DALLE (dentro da função generateImageSafely)
+        // ============================================
+
+        const generateImageSafely = async (
+            prompt: string,
+            fallbackUrl: string,
+            targetSize: "1024x1024" | "1024x1792",
+            imageNumber: number
+        ) => {
+            try {
+                if (!prompt) {
+                    logger.warn(STAGES.DALLE_FAIL, `Imagem ${imageNumber}: prompt vazio, usando fallback`);
+                    return fallbackUrl;
+                }
+                logger.info(STAGES.DALLE_CALL, `Gerando imagem ${imageNumber} (${targetSize})`, { promptLength: prompt.length });
+
+                const response = await activeOpenaiClient.images.generate({
+                    model: "dall-e-3",
+                    prompt: prompt,
+                    n: 1,
+                    size: targetSize,
+                });
+                const generatedUrl = response.data?.[0]?.url || fallbackUrl;
+                logger.success(STAGES.DALLE_SUCCESS, `Imagem ${imageNumber} gerada com sucesso`);
+                return generatedUrl;
+            } catch (imgErr: any) {
+                logger.error(STAGES.DALLE_FAIL, `Erro ao gerar imagem ${imageNumber}`, imgErr);
+
+                // ✅ ADIÇÃO: Reembolsar crédito se DALL-E falhar
+                if (user && imageNumber === 1 && !usingByok) {
+                    // Reembolsa apenas na primeira imagem para não reembolsar 3x
+                    const refundResult = await refundOnDALLEFailure(user.id, imgErr.message);
+                    logger.info(STAGES.BILLING_REFUND, 'Refund processado após falha DALL-E', { refundResult });
+                }
+
+                return fallbackUrl;
+            }
+        };
+
+        // ... resto do código continua igual ...
+
+    } catch (error: any) {
+        const totalTime = logger.endTimer('TOTAL_REQUEST', STAGES.ERROR_CRITICAL);
+        logger.error(STAGES.ERROR_CRITICAL, 'Erro catastrófico na requisição', error);
+
+        return NextResponse.json({
+            error: 'Erro catastrófico no servidor.',
+            message: error.message || String(error),
+            logs: logger.exportAsJSON()
+        }, { status: 500 });
+    }
+}

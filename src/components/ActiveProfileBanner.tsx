@@ -13,8 +13,10 @@ interface BrandProfile {
 
 export default function ActiveProfileBanner() {
   const [profile, setProfile] = useState<BrandProfile | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
+    setIsHydrated(true);
     try {
       const stored = localStorage.getItem("spybot_brand_profile");
       if (stored) {
@@ -26,8 +28,12 @@ export default function ActiveProfileBanner() {
     }
   }, []);
 
-  // Only render on client (avoid hydration mismatch)
-  if (typeof window === "undefined") return null;
+  // Evita erro de hidratação renderizando placeholder no servidor
+  if (!isHydrated) {
+    return (
+      <div className="mb-8 bg-[#111] border border-[#222] rounded-xl p-6 h-24" />
+    );
+  }
 
   if (!profile || !profile.niche) {
     return (

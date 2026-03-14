@@ -6,28 +6,60 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { Lock, Mail, ChevronRight } from "lucide-react";
 
-export default function LoginPage() {
+export default function SignupPage() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [success, setSuccess] = useState("");
     const router = useRouter();
 
-    const handleLogin = async (e: React.FormEvent) => {
+    const handleSignup = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         setError("");
+        setSuccess("");
 
-        const { data, error } = await supabase.auth.signInWithPassword({
+        // Validar email
+        if (!email.includes("@")) {
+            setError("Por favor, insira um email válido.");
+            setLoading(false);
+            return;
+        }
+
+        // Validar senha
+        if (password.length < 6) {
+            setError("A senha deve ter no mínimo 6 caracteres.");
+            setLoading(false);
+            return;
+        }
+
+        const { data, error: signupError } = await supabase.auth.signUp({
             email,
             password,
         });
 
-        if (error) {
-            setError("Credenciais inválidas. Verifique seu e-mail e senha.");
+        if (signupError) {
+            setError(signupError.message || "Erro ao criar conta. Tente novamente.");
             setLoading(false);
-        } else {
-            router.push("/dashboard");
+        } else if (data?.user) {
+            setSuccess("✅ Conta criada com sucesso! Redirecionando...");
+            // Fazer login automático após signup
+            const { error: loginError } = await supabase.auth.signInWithPassword({
+                email,
+                password,
+            });
+
+            if (!loginError) {
+                setTimeout(() => {
+                    router.push("/dashboard");
+                }, 2000);
+            } else {
+                setError("Conta criada, mas falha no login automático. Tente fazer login.");
+                setTimeout(() => {
+                    router.push("/login");
+                }, 2000);
+            }
         }
     };
 
@@ -40,15 +72,15 @@ export default function LoginPage() {
                         <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-green-400 to-emerald-600">
                             Spy Bot
                         </h1>
-                        <h2 className="text-2xl font-semibold mt-4">Acesso Restrito</h2>
+                        <h2 className="text-2xl font-semibold mt-4">Criar Conta</h2>
                         <p className="text-gray-400 mt-2">
-                            Insira as credenciais recebidas após a compra para acessar o clonador.
+                            Crie sua conta para acessar o clonador de anúncios milionários.
                         </p>
                     </div>
 
-                    <form onSubmit={handleLogin} className="space-y-6">
+                    <form onSubmit={handleSignup} className="space-y-6">
                         <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-2">E-mail de Compra</label>
+                            <label className="block text-sm font-medium text-gray-400 mb-2">E-mail</label>
                             <div className="relative">
                                 <Mail className="absolute left-3 top-3 h-5 w-5 text-gray-500" />
                                 <input
@@ -63,7 +95,7 @@ export default function LoginPage() {
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-2">Senha (Token)</label>
+                            <label className="block text-sm font-medium text-gray-400 mb-2">Senha (Mínimo 6 caracteres)</label>
                             <div className="relative">
                                 <Lock className="absolute left-3 top-3 h-5 w-5 text-gray-500" />
                                 <input
@@ -83,21 +115,24 @@ export default function LoginPage() {
                             </div>
                         )}
 
+                        {success && (
+                            <div className="p-3 bg-green-900/30 border border-green-500/50 rounded text-green-400 text-sm">
+                                {success}
+                            </div>
+                        )}
+
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-bold py-3 px-4 rounded-lg transition-all"
+                            className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-bold py-3 px-4 rounded-lg transition-all disabled:opacity-50"
                         >
-                            <span>{loading ? "Acessando..." : "Entrar no Painel"}</span>
+                            <span>{loading ? "Criando conta..." : "Criar Conta"}</span>
                             {!loading && <ChevronRight className="h-5 w-5" />}
                         </button>
                     </form>
 
                     <p className="mt-8 text-center text-xs text-gray-600">
-                        Não tem conta ainda? <Link href="/signup" className="text-green-500 hover:underline">Criar conta aqui.</Link>
-                    </p>
-                    <p className="mt-2 text-center text-xs text-gray-600">
-                        Ou <Link href="/" className="text-green-500 hover:underline">voltar para a página principal.</Link>
+                        Já tem conta? <Link href="/login" className="text-green-500 hover:underline">Faça login aqui.</Link>
                     </p>
                 </div>
             </div>
@@ -109,9 +144,9 @@ export default function LoginPage() {
                     <div className="w-24 h-24 bg-gradient-to-br from-green-400 to-emerald-600 rounded-2xl mx-auto mb-8 flex items-center justify-center shadow-[0_0_50px_rgba(52,211,153,0.3)]">
                         <Lock className="w-12 h-12 text-black" />
                     </div>
-                    <h2 className="text-3xl font-bold mb-4">A Área Segura dos Players Ocultos.</h2>
+                    <h2 className="text-3xl font-bold mb-4">Bem-vindo ao Spy Bot</h2>
                     <p className="text-gray-400 text-lg">
-                        Você está prestes a entrar no ambiente onde copiamos campanhas milionárias em segundos. Mantenha seu login em segurança.
+                        Junte-se à comunidade de empreendedores que estão clonando campanhas milionárias em segundos.
                     </p>
                 </div>
             </div>

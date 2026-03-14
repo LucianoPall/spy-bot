@@ -227,7 +227,7 @@ function VariationCard({ title, text, imageUrl, index, copied, onCopy }: { title
         <div className="bg-gradient-to-b from-[#151515] to-[#0a0a0a] border border-[#222] hover:border-green-500/50 transition-colors rounded-xl p-5 flex flex-col group relative overflow-hidden">
             {imageUrl ? (
                 <div className="relative w-full h-48 mb-4 rounded-lg overflow-hidden border border-[#333] shrink-0 group/image">
-                    <Image src={imageUrl} alt={title} fill className="w-full h-full object-cover group-hover/image:scale-105 transition-transform duration-500" onError={() => console.error(`Erro ao carregar imagem ${index}: ${imageUrl}`)} />
+                    <Image src={`/api/proxy-image?url=${encodeURIComponent(imageUrl)}`} alt={title} fill className="w-full h-full object-cover group-hover/image:scale-105 transition-transform duration-500" onError={() => console.error(`Erro ao carregar imagem ${index}: ${imageUrl}`)} />
 
                     {/* Overlay Escuro com Botão de Download (Aparece ao passar o mouse) */}
                     <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/image:opacity-100 transition-opacity duration-300 flex items-center justify-center">

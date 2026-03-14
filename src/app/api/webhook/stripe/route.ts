@@ -22,9 +22,10 @@ export async function POST(req: Request) {
 
     try {
         event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-    } catch (err: any) {
-        console.error(`Webhook Error: ${err.message}`);
-        return NextResponse.json({ error: `Webhook Error: ${err.message}` }, { status: 400 });
+    } catch (err: unknown) {
+        const errorMessage = (err as { message?: string } | undefined)?.message || String(err);
+        console.error(`Webhook Error: ${errorMessage}`);
+        return NextResponse.json({ error: `Webhook Error: ${errorMessage}` }, { status: 400 });
     }
 
     // Quando o pagamento for bem sucedido...
