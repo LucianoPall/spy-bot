@@ -50,7 +50,7 @@ export default function KPICards() {
   }, []);
 
   return (
-    <div className="grid md:grid-cols-3 gap-4 mb-8">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 mb-8">
       {/* Credits Card */}
       <div className="bg-[#111] border border-[#222] rounded-lg p-6 space-y-3">
         <div className="flex items-center gap-2">

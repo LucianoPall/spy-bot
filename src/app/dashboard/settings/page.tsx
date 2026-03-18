@@ -90,7 +90,7 @@ export default function SettingsPage() {
     if (loading) return null;
 
     return (
-        <div className="max-w-3xl mx-auto space-y-8">
+        <div className="w-full space-y-8">
             {/* Painel de Assinatura (Monetização) */}
             <div className="bg-gradient-to-r from-[#111] to-[#0a0a0a] border border-[#222] rounded-xl p-6 md:p-8 shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-green-500/10 blur-3xl rounded-full translate-x-10 -translate-y-10 pointer-events-none"></div>

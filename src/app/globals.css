@@ -14,3 +14,25 @@
     color: white;
   }
 }
+
+@layer components {
+  /* Container responsivo padrão */
+  .container-responsive {
+    @apply w-full max-w-6xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6;
+  }
+
+  /* Grid cards padrão */
+  .grid-cards {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-6;
+  }
+
+  /* Padding responsivo padrão */
+  .p-responsive {
+    @apply p-2 sm:p-3 md:p-4 lg:p-5;
+  }
+
+  /* Gap escalável */
+  .gap-responsive {
+    @apply gap-2 sm:gap-3 md:gap-4 lg:gap-6;
+  }
+}

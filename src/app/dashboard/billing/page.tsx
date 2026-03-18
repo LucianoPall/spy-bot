@@ -22,7 +22,7 @@ export default async function BillingPage() {
     const hasByok = profile?.openai_key && profile.openai_key.trim() !== "";
 
     return (
-        <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="w-full space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div>
                 <h1 className="text-3xl font-bold text-white flex items-center gap-3">
                     <CreditCard className="text-green-500" size={32} />

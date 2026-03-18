@@ -84,9 +84,6 @@ vi.mock('openai', () => ({
 // Mock de fetch global
 global.fetch = vi.fn();
 
-// Mock de setTimeout para tests
-vi.useFakeTimers();
-
 // ============================================================================
 // TESTES: 1. fetchWithRetry() - Retry com 3 tentativas
 // ============================================================================
@@ -95,10 +92,15 @@ describe('fetchWithRetry - Exponential Backoff Retry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (global.fetch as any).mockClear();
+    vi.useRealTimers(); // Use real timers para evitar timeouts nos tests de retry
   });
 
   afterEach(() => {
     vi.clearAllTimers();
+  });
+
+  afterAll(() => {
+    vi.useFakeTimers(); // Reabilitar fake timers para outros testes
   });
 
   it('deve fazer requisição com sucesso na primeira tentativa (status 200)', async () => {
@@ -146,12 +148,11 @@ describe('fetchWithRetry - Exponential Backoff Retry', () => {
 
     // Act
     const response = await fetchWithRetry(mockUrl, {}, 3);
-    await vi.runAllTimersAsync();
 
     // Assert
     expect(response.ok).toBe(true);
     expect(global.fetch).toHaveBeenCalledTimes(2);
-  });
+  }, 15000);
 
   it('deve retentar em erro 429 (rate limit)', async () => {
     // Arrange
@@ -173,12 +174,11 @@ describe('fetchWithRetry - Exponential Backoff Retry', () => {
 
     // Act
     const response = await fetchWithRetry(mockUrl, {}, 3);
-    await vi.runAllTimersAsync();
 
     // Assert
     expect(response.ok).toBe(true);
     expect(global.fetch).toHaveBeenCalledTimes(2);
-  });
+  }, 15000);
 
   it('deve lançar erro após 3 tentativas falhadas', async () => {
     // Arrange
@@ -196,9 +196,8 @@ describe('fetchWithRetry - Exponential Backoff Retry', () => {
     await expect(fetchWithRetry(mockUrl, {}, 3)).rejects.toThrow(
       /Apify retornou status 503 após 3 tentativas/
     );
-    await vi.runAllTimersAsync();
     expect(global.fetch).toHaveBeenCalledTimes(3);
-  });
+  }, 30000);
 
   it('deve aplicar delays exponenciais: 1s, 2s, 4s', async () => {
     // Arrange
@@ -217,11 +216,10 @@ describe('fetchWithRetry - Exponential Backoff Retry', () => {
     } catch (e) {
       // Esperado falhar
     }
-    await vi.runAllTimersAsync();
 
     // Assert
     expect(global.fetch).toHaveBeenCalledTimes(3);
-  });
+  }, 30000);
 
   it('deve não retentar em erro 404 (não-transitório)', async () => {
     // Arrange
@@ -247,6 +245,10 @@ describe('fetchWithRetry - Exponential Backoff Retry', () => {
 // ============================================================================
 
 describe('Apify Parsing - Extração de Copy e Imagem', () => {
+  beforeAll(() => {
+    vi.useFakeTimers(); // Usar fake timers para estes testes
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     logger.clear();

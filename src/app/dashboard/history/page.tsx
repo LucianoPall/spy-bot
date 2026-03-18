@@ -3,17 +3,22 @@ import { Clock, History as HistoryIcon, Zap, Target, Calendar } from "lucide-rea
 import { redirect } from "next/navigation";
 import HistoryGallery from "@/components/HistoryGallery";
 
+// ⚡ Cache de 10 segundos para navegação rápida (OTIMIZAÇÃO)
+export const revalidate = 10;
+
 export default async function HistoryPage() {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) redirect("/login");
 
+    // ⚡ OTIMIZAÇÃO: Usar select limitado (só campos necessários) + revalidate
     const { data: clones, error } = await supabase
         .from("spybot_generations")
-        .select("*")
+        .select("id, niche, created_at, variante1, image1, image2, image3, original_copy, original_image", { count: 'exact' })
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .limit(50); // ⚡ Limitar a 50 clones (otimização de pagination)
 
     if (error) {
         console.error("Erro ao carregar histórico", error);
@@ -24,7 +29,10 @@ export default async function HistoryPage() {
         );
     }
 
-    if (!clones || clones.length === 0) {
+    // Garantir que clones é sempre um array
+    const clonesList = clones || [];
+
+    if (clonesList.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-64 text-center">
                 <Clock className="w-16 h-16 text-gray-600 mb-4" />
@@ -37,60 +45,54 @@ export default async function HistoryPage() {
     }
 
     // Calculate stats
-    const totalClones = clones.length;
-    const distinctNiches = new Set(clones.map(c => c.niche).filter(Boolean)).size;
-    const firstCloneDate = clones[clones.length - 1]?.created_at || null;
+    const totalClones = clonesList.length;
+    const distinctNiches = new Set(clonesList.map(c => c.niche).filter(Boolean)).size;
+    const firstCloneDate = clonesList[clonesList.length - 1]?.created_at || null;
 
     return (
-        <div className="max-w-6xl mx-auto space-y-8">
+        <div className="w-full space-y-2 sm:space-y-3">
             <div>
-                <h2 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
-                    <HistoryIcon className="text-green-500" size={32} />
-                    O Cofre: Meus Clones
+                <h2 className="text-sm sm:text-base font-bold text-white mb-0.5 flex items-center gap-1.5">
+                    <HistoryIcon className="text-green-500" size={16} />
+                    Meus Clones
                 </h2>
-                <p className="text-gray-400">
-                    Aqui ficam guardadas todas as suas pérolas de copywriting e criativos validados.
-                </p>
             </div>
 
-            {/* Stats Cards */}
-            <div className="grid md:grid-cols-3 gap-4">
+            {/* Stats Cards: responsivo com spacing adequado */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-6">
                 {/* Total Clones Card */}
-                <div className="bg-[#111] border border-[#222] rounded-lg p-6 space-y-3">
+                <div className="bg-[#111] border border-[#222] rounded-[10px] p-3 sm:p-4 md:p-5 space-y-2 min-h-[70px] md:min-h-[90px] lg:min-h-[110px]">
                     <div className="flex items-center gap-2">
-                        <Zap className="text-green-500" size={20} />
-                        <span className="text-sm font-medium text-gray-400">Total de Clones</span>
+                        <Zap className="text-green-500" size={14} />
+                        <span className="text-[9px] sm:text-[10px] md:text-[11px] lg:text-[12px] font-medium text-gray-400">Total</span>
                     </div>
-                    <div className="text-3xl font-bold text-white">{totalClones}</div>
-                    <p className="text-xs text-gray-500">Anúncios clonados</p>
+                    <div className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold text-white">{totalClones}</div>
                 </div>
 
                 {/* Distinct Niches Card */}
-                <div className="bg-[#111] border border-[#222] rounded-lg p-6 space-y-3">
+                <div className="bg-[#111] border border-[#222] rounded-[10px] p-3 sm:p-4 md:p-5 space-y-2 min-h-[70px] md:min-h-[90px] lg:min-h-[110px]">
                     <div className="flex items-center gap-2">
-                        <Target className="text-green-500" size={20} />
-                        <span className="text-sm font-medium text-gray-400">Nichos Utilizados</span>
+                        <Target className="text-green-500" size={14} />
+                        <span className="text-[9px] sm:text-[10px] md:text-[11px] lg:text-[12px] font-medium text-gray-400">Nichos</span>
                     </div>
-                    <div className="text-3xl font-bold text-white">{distinctNiches}</div>
-                    <p className="text-xs text-gray-500">Mercados diferentes</p>
+                    <div className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold text-white">{distinctNiches}</div>
                 </div>
 
                 {/* First Clone Date Card */}
-                <div className="bg-[#111] border border-[#222] rounded-lg p-6 space-y-3">
+                <div className="bg-[#111] border border-[#222] rounded-[10px] p-3 sm:p-4 md:p-5 space-y-2 min-h-[70px] md:min-h-[90px] lg:min-h-[110px]">
                     <div className="flex items-center gap-2">
-                        <Calendar className="text-green-500" size={20} />
-                        <span className="text-sm font-medium text-gray-400">Primeiro Clone</span>
+                        <Calendar className="text-green-500" size={14} />
+                        <span className="text-[9px] sm:text-[10px] md:text-[11px] lg:text-[12px] font-medium text-gray-400">Desde</span>
                     </div>
-                    <div className="text-lg font-bold text-white">
+                    <div className="text-sm sm:text-base md:text-lg lg:text-xl font-bold text-white">
                         {firstCloneDate
                             ? new Date(firstCloneDate).toLocaleDateString('pt-BR')
                             : '-'}
                     </div>
-                    <p className="text-xs text-gray-500">Data de início</p>
                 </div>
             </div>
 
-            <HistoryGallery initialClones={clones} />
+            <HistoryGallery initialClones={clonesList} />
         </div>
     );
 }

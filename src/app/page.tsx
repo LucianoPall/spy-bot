@@ -95,10 +95,10 @@ export default function Home() {
   ];
 
   return (
-    <main className="min-h-screen bg-dark-900 text-slate-100 flex flex-col">
+    <main className="min-h-screen w-full bg-dark-900 text-slate-100 flex flex-col">
       {/* ===== NAVBAR FIXA ===== */}
       <nav className="fixed top-0 w-full bg-dark-900/80 backdrop-blur-md border-b border-slate-800/50 z-50">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6 py-4 flex items-center justify-between">
           <div className="text-2xl font-bold text-brand-500">Spy Bot</div>
           <a
             href="#checkout-ticto"
@@ -110,7 +110,7 @@ export default function Home() {
       </nav>
 
       {/* ===== HERO SECTION ===== */}
-      <section className="w-full max-w-6xl mx-auto px-6 pt-32 pb-20 text-center flex flex-col items-center mt-16">
+      <section className="w-full max-w-6xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6 pt-32 pb-20 text-center flex flex-col items-center mt-16">
         <div className="inline-block py-1 px-3 rounded-full bg-brand-900/50 border border-brand-500/30 text-brand-500 text-sm font-medium mb-6">
           ✨ Usado por +847 anunciantes brasileiros
         </div>
@@ -150,9 +150,9 @@ export default function Home() {
 
       {/* ===== PAIN SECTION ===== */}
       <section className="w-full bg-dark-800/50 py-20">
-        <div className="max-w-6xl mx-auto px-6">
+        <div className="max-w-6xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6">
           <h2 className="text-4xl font-bold text-center mb-16">Você está cometendo esse erro?</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-6">
             {painPoints.map((pain, idx) => (
               <div
                 key={idx}
@@ -170,9 +170,9 @@ export default function Home() {
       </section>
 
       {/* ===== COMO FUNCIONA ===== */}
-      <section className="w-full max-w-6xl mx-auto px-6 py-20">
+      <section className="w-full max-w-6xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6 py-20">
         <h2 className="text-4xl font-bold text-center mb-16">Como funciona (em 3 passos)</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-6">
           {[
             {
               step: '1',
@@ -206,9 +206,9 @@ export default function Home() {
 
       {/* ===== FEATURES ===== */}
       <section className="w-full bg-dark-800/50 py-20">
-        <div className="max-w-6xl mx-auto px-6">
+        <div className="max-w-6xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6">
           <h2 className="text-4xl font-bold text-center mb-16">O que você ganha com Spy Bot</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-6">
             {features.map((feature, idx) => (
               <div key={idx} className="bg-dark-900 p-8 rounded-2xl border border-slate-800">
                 <div className="w-10 h-10 bg-brand-600/20 rounded-lg flex items-center justify-center mb-4 text-brand-500 font-bold">
@@ -223,9 +223,9 @@ export default function Home() {
       </section>
 
       {/* ===== DEPOIMENTOS ===== */}
-      <section className="w-full max-w-6xl mx-auto px-6 py-20">
+      <section className="w-full max-w-6xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6 py-20">
         <h2 className="text-4xl font-bold text-center mb-16">O que dizem nossos clientes</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-6">
           {testimonials.map((test, idx) => (
             <div key={idx} className="bg-dark-800 p-8 rounded-2xl border border-slate-800">
               <div className="flex gap-1 mb-4">
@@ -249,7 +249,7 @@ export default function Home() {
 
       {/* ===== GARANTIA ===== */}
       <section className="w-full bg-dark-800/50 py-16">
-        <div className="max-w-4xl mx-auto px-6 text-center">
+        <div className="max-w-4xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6 text-center">
           <div className="inline-block p-4 bg-brand-900/20 rounded-full mb-6">
             <span className="text-4xl">🛡️</span>
           </div>
@@ -263,7 +263,7 @@ export default function Home() {
       {/* ===== PRICING / CTA FINAL ===== */}
       <section
         id="checkout-ticto"
-        className="w-full max-w-4xl mx-auto px-6 py-20"
+        className="w-full max-w-4xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6 py-20"
       >
         <div className="bg-gradient-to-b from-dark-800 to-dark-900 p-10 md:p-16 rounded-3xl border border-brand-500/20 text-center shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-brand-500/10 blur-3xl rounded-full"></div>
@@ -307,7 +307,7 @@ export default function Home() {
 
       {/* ===== FAQ ===== */}
       <section className="w-full bg-dark-800/50 py-20">
-        <div className="max-w-3xl mx-auto px-6">
+        <div className="max-w-3xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6">
           <h2 className="text-4xl font-bold text-center mb-16">Dúvidas Frequentes</h2>
           <div className="space-y-4">
             {faqs.map((faq, idx) => (
@@ -337,7 +337,7 @@ export default function Home() {
 
       {/* ===== FOOTER ===== */}
       <footer className="w-full bg-dark-800 border-t border-slate-800 py-12">
-        <div className="max-w-6xl mx-auto px-6">
+        <div className="max-w-6xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6">
           <div className="flex flex-col md:flex-row justify-between items-center gap-8">
             <div>
               <div className="text-2xl font-bold text-brand-500 mb-2">

@@ -40,7 +40,7 @@ const NICHE_DATABASE: Record<string, { copies: string[]; images: string[]; displ
     copies: [
       "Ganho R$5k/mês em casa, sem vender nada e sem deixar meu emprego. Não é aí de comissão de MLM. É um sistema que funciona mesmo quando estou dormindo. Vejo que muitos gostam disso quando mostro como funciona.",
       "Você pode estar ganhando R$2mil a R$7mil extra todo mês com apenas 15 minutos de trabalho por dia. Milhares de pessoas do Brasil, Portugal e dos EUA estão fazendo isso AGORA. Você vai ficar de fora?",
-      "A forma tradicional de ganhar dinheiro está MORTA. Enquanto você trabalha 8 horas para seu patrão, outras pessoas estão ganhando 20x mais em 2 horas usando este sistema digital. Descubra como entrar para este grupo seleto."
+      "A forma tradicional de ganhar dinheiro está MORTA. Ganhe R$1mil a R$10mil enquanto você trabalha. Outras pessoas estão ganhando 20x mais em 2 horas usando este sistema digital. Descubra como entrar para este grupo seleto e aumentar sua renda."
     ],
     images: [
       "https://images.unsplash.com/photo-1533523666223-68a78f686f21?auto=format&fit=crop&q=80&w=800",
@@ -52,9 +52,9 @@ const NICHE_DATABASE: Record<string, { copies: string[]; images: string[]; displ
   "igaming": {
     displayName: "iGaming",
     copies: [
-      "Você está deixando dinheiro na mesa. Enquanto você estuda, trabalha ou dorme, seu dinheiro poderia estar gerando mais dinheiro. Aqui é diferente, aqui você GANHA. Saiba como dezenas de milhares estão aproveitando.",
-      "O maior prêmio que você vai tirar daqui é conhecimento. Aprenda as estratégias que os ganhadores usam. Bônus de boas-vindas de até R$2000 + rodadas grátis. Começe agora com um clique.",
-      "Estou vendo muita gente perdendo dinheiro em lugares errados. Viemos para mudar esse jogo. Segurança de nível 1, odds justas e pagamentos 100% confiáveis. Que tal testar com a gente?"
+      "Cassino online com melhor reputação. Ganhe prêmios maiores enquanto você estuda, trabalha ou dorme. Aqui é diferente, aqui você GANHA apostando com segurança. Saiba como dezenas de milhares estão aproveitando.",
+      "O maior prêmio que você vai tirar do cassino é conhecimento. Aprenda as estratégias que os ganhadores usam em apostas. Bônus de boas-vindas de até R$2000 + rodadas grátis. Começe agora com um clique.",
+      "Estou vendo muita gente perdendo dinheiro em cassinos errados. Viemos para mudar esse jogo de aposta. Segurança de nível 1, odds justas e pagamentos 100% confiáveis. Que tal testar um cassino melhor com a gente?"
     ],
     images: [
       "https://images.unsplash.com/photo-1553532173-98eeb64c6a62?auto=format&fit=crop&q=80&w=800",
