@@ -1022,11 +1022,52 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
                             const fileName = `${userId}/${timestamp}-${imageNumber}.png`;
                             logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Nome do arquivo: ${fileName}`);
 
-                            const uploadResponse = await supabaseClient.storage
-                                .from('spybot_images')
-                                .upload(fileName, blob, { contentType: 'image/png', upsert: true });
+                            // ✅ RETRY COM BACKOFF EXPONENCIAL (3 tentativas)
+                            let uploadResponse = null;
+                            let lastError: any = null;
+                            const maxRetries = 3;
 
-                            const { data, error } = uploadResponse;
+                            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                                try {
+                                    logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Tentativa ${attempt + 1}/${maxRetries} de upload`);
+
+                                    uploadResponse = await supabaseClient.storage
+                                        .from('spybot_images')
+                                        .upload(fileName, blob, { contentType: 'image/png', upsert: true });
+
+                                    // Se não houver erro, sair do loop
+                                    if (!uploadResponse.error) {
+                                        logger.success(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] ✅ Upload bem-sucedido na tentativa ${attempt + 1}`);
+                                        break;
+                                    }
+
+                                    lastError = uploadResponse.error;
+
+                                    // Se for a última tentativa, não fazer backoff
+                                    if (attempt < maxRetries - 1) {
+                                        const backoffMs = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+                                        logger.warn(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] ⚠️ Retry ${attempt + 1}: aguardando ${backoffMs}ms antes de tentar novamente`, {
+                                            error: lastError.message,
+                                            backoffMs
+                                        });
+                                        await new Promise(resolve => setTimeout(resolve, backoffMs));
+                                    }
+                                } catch (e: unknown) {
+                                    lastError = e;
+                                    logger.warn(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Exceção na tentativa ${attempt + 1}:`, {
+                                        error: e instanceof Error ? e.message : String(e)
+                                    });
+
+                                    // Se não for a última tentativa, fazer backoff
+                                    if (attempt < maxRetries - 1) {
+                                        const backoffMs = Math.pow(2, attempt) * 1000;
+                                        logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Aguardando ${backoffMs}ms antes de retry`);
+                                        await new Promise(resolve => setTimeout(resolve, backoffMs));
+                                    }
+                                }
+                            }
+
+                            const { data, error } = uploadResponse || { data: null, error: lastError };
 
                             logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Resposta do upload:`, {
                                 hasError: !!error,
@@ -1064,7 +1105,18 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
                             const urlResponse = supabaseClient.storage.from('spybot_images').getPublicUrl(fileName);
                             const publicUrl = urlResponse.data?.publicUrl;
 
-                            logger.success(STAGES.STORAGE_SUCCESS, `✅ [IMAGEM ${imageNumber}] SALVA COM SUCESSO`, {
+                            // ✅ VALIDAÇÃO DUPLA: Verificar se URL é realmente Supabase
+                            const isSupabaseUrl = (url: string) => url?.includes('supabase.co') && url?.includes('spybot_images');
+
+                            if (!isSupabaseUrl(publicUrl)) {
+                                logger.error('CRITICAL_UPLOAD_VALIDATION', `❌ [IMAGEM ${imageNumber}] URL retornada não é Supabase!`, {
+                                    publicUrl: publicUrl?.substring(0, 100) || 'null',
+                                    expectedDomain: 'supabase.co/spybot_images'
+                                });
+                                return placeholderUrl;
+                            }
+
+                            logger.success(STAGES.STORAGE_SUCCESS, `✅ [IMAGEM ${imageNumber}] SALVA COM SUCESSO NO SUPABASE`, {
                                 fileName,
                                 publicUrlStart: publicUrl?.substring(0, 80) || 'ERRO'
                             });
@@ -1093,44 +1145,45 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
                     // VALIDAÇÃO FINAL: Garantir que NUNCA temos URLs DALL-E expiradas
                     // Se por algum motivo temos URL DALL-E (mesmo após upload), converter para fallback
                     const isDalleUrl = (url: string) => url?.includes('oaidalleapiprodscus') || url?.includes('openai');
+                    const isSupabaseUrl = (url: string) => url?.includes('supabase.co') && url?.includes('spybot_images');
 
+                    // Validação IMG1
                     if (isDalleUrl(finalImg1)) {
-                        logger.warn(STAGES.STORAGE_FAIL, '⚠️ PROTEÇÃO: finalImg1 é URL DALL-E após upload, forçando fallback');
+                        logger.error('CRITICAL_URL_VALIDATION', '❌ [IMAGEM 1] PROTEÇÃO: URL DALL-E após upload, forçando fallback');
                         finalImg1 = fallbackImages[0];
                     }
+                    if (!isSupabaseUrl(finalImg1) && !finalImg1.includes('unsplash') && !finalImg1.includes('stockapi')) {
+                        logger.warn(STAGES.STORAGE_FAIL, `⚠️ [IMAGEM 1] URL não é Supabase ou stock verificado: ${finalImg1.substring(0, 80)}`);
+                    }
+
+                    // Validação IMG2
                     if (isDalleUrl(finalImg2)) {
-                        logger.warn(STAGES.STORAGE_FAIL, '⚠️ PROTEÇÃO: finalImg2 é URL DALL-E após upload, forçando fallback');
+                        logger.error('CRITICAL_URL_VALIDATION', '❌ [IMAGEM 2] PROTEÇÃO: URL DALL-E após upload, forçando fallback');
                         finalImg2 = fallbackImages[1];
                     }
+                    if (!isSupabaseUrl(finalImg2) && !finalImg2.includes('unsplash') && !finalImg2.includes('stockapi')) {
+                        logger.warn(STAGES.STORAGE_FAIL, `⚠️ [IMAGEM 2] URL não é Supabase ou stock verificado: ${finalImg2.substring(0, 80)}`);
+                    }
+
+                    // Validação IMG3
                     if (isDalleUrl(finalImg3)) {
-                        logger.warn(STAGES.STORAGE_FAIL, '⚠️ PROTEÇÃO: finalImg3 é URL DALL-E após upload, forçando fallback');
+                        logger.error('CRITICAL_URL_VALIDATION', '❌ [IMAGEM 3] PROTEÇÃO: URL DALL-E após upload, forçando fallback');
                         finalImg3 = fallbackImages[2];
                     }
-
-                    logger.info(STAGES.SUPABASE_INSERT, 'Inserindo geração no banco de dados');
-                    const { error: insertError } = await supabase.from('spybot_generations').insert({
-                        user_id: user.id,
-                        original_url: adUrl,
-                        original_copy: originalCopy,
-                        original_image: adImageUrl,
-                        niche: generatedCopys.detectedNiche || 'Geral', // <- Salva o nicho detectado pela IA
-                        variante1: generatedCopys.variante1,
-                        image1: finalImg1,
-                        variante2: generatedCopys.variante2,
-                        image2: finalImg2,
-                        variante3: generatedCopys.variante3,
-                        image3: finalImg3,
-                        strategic_analysis: generatedCopys.strategic_analysis || null,
-                    });
-
-                    if (insertError) {
-                        throw new Error(`Erro ao inserir no banco de dados: ${insertError.message}`);
+                    if (!isSupabaseUrl(finalImg3) && !finalImg3.includes('unsplash') && !finalImg3.includes('stockapi')) {
+                        logger.warn(STAGES.STORAGE_FAIL, `⚠️ [IMAGEM 3] URL não é Supabase ou stock verificado: ${finalImg3.substring(0, 80)}`);
                     }
 
-                    logger.success(STAGES.SUPABASE_SUCCESS, 'Clone salvo no histórico e Storage', {
-                        userId: user.id,
-                        niche: generatedCopys.detectedNiche || 'Geral'
+                    // Log de resumo das URLs finais
+                    logger.info('FINAL_IMAGE_URLS_VALIDATION', '📸 Validação final de URLs', {
+                        img1Source: isSupabaseUrl(finalImg1) ? 'Supabase ✅' : finalImg1.includes('unsplash') ? 'Unsplash' : 'Fallback Niche',
+                        img2Source: isSupabaseUrl(finalImg2) ? 'Supabase ✅' : finalImg2.includes('unsplash') ? 'Unsplash' : 'Fallback Niche',
+                        img3Source: isSupabaseUrl(finalImg3) ? 'Supabase ✅' : finalImg3.includes('unsplash') ? 'Unsplash' : 'Fallback Niche'
                     });
+
+                    logger.info(STAGES.SUPABASE_INSERT, '⚠️ PRIMEIRA TENTATIVA DE INSERT REMOVIDA - Insert duplo detectado e eliminado. O banco será salvo apenas APÓS o upload das imagens no Supabase Storage.');
+                    // REMOVIDO: Primeiro INSERT não é mais realizado aqui
+                    // A geração será salva APENAS após o upload das imagens (vide abaixo)
 
                     // Desconta 1 crédito se for grátis e não tiver BYOK
                     const hasByok = brandProfile && brandProfile.openaiKey && brandProfile.openaiKey.trim() !== "";
@@ -1334,38 +1387,51 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
                 willUseFallback: !persistedImage1 || !persistedImage2 || !persistedImage3
             });
 
-            const { data: savedGeneration, error: dbError } = await supabase
-                .from('spybot_generations')
-                .insert({
-                    user_id: user?.id || 'anonymous',
-                    original_url: adUrl,
-                    original_copy: originalCopy,
-                    original_image: adImageUrl,
-                    variante1: generatedCopys.variante1,
-                    variante2: generatedCopys.variante2,
-                    variante3: generatedCopys.variante3,
-                    image1: finalImage1,
-                    image2: finalImage2,
-                    image3: finalImage3,
-                    niche: generatedCopys.detectedNiche,
-                    strategic_analysis: generatedCopys.strategic_analysis || null
-                })
-                .select()
-                .single();
+            // ✅ ÚNICO INSERT: Salvar geração APENAS AQUI (após upload de imagens permanentes)
+            // Garantir que user.id existe e não usar 'anonymous'
+            let savedGeneration: any = null;
+            if (!user?.id) {
+                logger.warn(STAGES.DALLE_CALL, '⚠️ Usuário não autenticado, geração não será salva no banco');
+            } else {
+                const { data, error: dbError } = await supabase
+                    .from('spybot_generations')
+                    .insert({
+                        user_id: user.id,  // CRÍTICO: Usar user.id (nunca 'anonymous')
+                        original_url: adUrl,
+                        original_copy: originalCopy,
+                        original_image: adImageUrl,
+                        variante1: generatedCopys.variante1,
+                        variante2: generatedCopys.variante2,
+                        variante3: generatedCopys.variante3,
+                        image1: finalImage1,
+                        image2: finalImage2,
+                        image3: finalImage3,
+                        niche: generatedCopys.detectedNiche,
+                        strategic_analysis: generatedCopys.strategic_analysis || null
+                    })
+                    .select()
+                    .single();
 
-            if (dbError) {
-                logger.error(STAGES.DALLE_CALL, '❌ Erro ao salvar geração no banco', {
-                    error: dbError.message,
-                    errorCode: (dbError as any).code
-                });
-                // Não falhar a requisição, retornar o que temos
-            } else if (savedGeneration) {
-                logger.success(STAGES.DALLE_CALL, '✅ Geração salva permanentemente no banco', {
-                    generationId: savedGeneration.id,
-                    hasImage1: !!savedGeneration.image1,
-                    hasImage2: !!savedGeneration.image2,
-                    hasImage3: !!savedGeneration.image3
-                });
+                if (dbError) {
+                    logger.error(STAGES.DALLE_CALL, '❌ Erro ao salvar geração no banco (ÚNICO INSERT)', {
+                        error: dbError.message,
+                        errorCode: (dbError as any).code,
+                        userId: user.id,
+                        reason: 'Possível: RLS policy, constraint violation, ou erro de conexão'
+                    });
+                    // Não falhar a requisição, retornar o que temos
+                    savedGeneration = null;
+                } else if (data) {
+                    savedGeneration = data;
+                    logger.success(STAGES.DALLE_CALL, '✅ GERAÇÃO SALVA 1x NO BANCO (ÚNICO INSERT)', {
+                        generationId: savedGeneration.id,
+                        userId: user.id,
+                        hasImage1: !!savedGeneration.image1,
+                        hasImage2: !!savedGeneration.image2,
+                        hasImage3: !!savedGeneration.image3,
+                        duplicateGuard: 'Primeiro INSERT foi removido - salvamento único garantido'
+                    });
+                }
             }
 
             const responseData = {
