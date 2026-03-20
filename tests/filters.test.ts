@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { applyFilters } from '@/lib/filters';
 import { FilterOptions } from '@/lib/types';
 
 /**
@@ -38,35 +39,6 @@ describe('Advanced Filters', () => {
       is_favorite: true,
     },
   ];
-
-  // Função auxiliar para aplicar filtros
-  function applyFilters(clones: typeof mockClones, filters: FilterOptions) {
-    return clones.filter(clone => {
-      // Filtro de Nicho
-      let matchesNiche = true;
-      if (filters.niche) {
-        matchesNiche = clone.niche === filters.niche;
-      }
-
-      // Filtro de Data
-      let matchesDate = true;
-      if (filters.dateRange) {
-        const cloneDate = new Date(clone.created_at);
-        const from = new Date(filters.dateRange.from);
-        const to = new Date(filters.dateRange.to);
-        to.setHours(23, 59, 59, 999);
-        matchesDate = cloneDate >= from && cloneDate <= to;
-      }
-
-      // Filtro de Status
-      let matchesStatus = true;
-      if (filters.status === 'favorite') {
-        matchesStatus = clone.is_favorite === true;
-      }
-
-      return matchesNiche && matchesDate && matchesStatus;
-    });
-  }
 
   describe('Filtro por Nicho', () => {
     it('deve filtrar clones por nicho específico', () => {

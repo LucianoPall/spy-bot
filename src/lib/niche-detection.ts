@@ -50,11 +50,11 @@ const NICHE_KEYWORDS: Record<string, {
   emagrecimento: {
     keywords: [
       // Português
-      'emagrecer', 'emagrecimento', 'perca quilos', 'perder peso', 'reduzir peso',
+      'emagrecer', 'emagreça', 'emagrecimento', 'perca quilos', 'perder peso', 'reduzir peso',
       'programa de emagrecimento', 'método emagrecedor', 'antes depois emagrecimento',
       'dieta para emagrecer', 'como emagrecer', 'dicas emagrecimento',
       // English
-      'weight loss', 'lose weight', 'weight loss program', 'diet plan',
+      'diet', 'weight loss', 'lose weight', 'weight loss program', 'diet plan',
       'how to lose weight', 'weight loss method', 'slim down',
       // Deutsch
       'abnehmen', 'gewichtsverlust', 'diät programm',
@@ -97,8 +97,8 @@ const NICHE_KEYWORDS: Record<string, {
   alimentacao: {
     keywords: [
       // Português
-      'receita', 'comida', 'culinaria', 'gastronomia', 'delivery',
-      'restaurante', 'prato', 'culinario', 'cozinha', 'chef',
+      'receita', 'receitas', 'comida', 'culinaria', 'culinária', 'gastronomia', 'delivery',
+      'restaurante', 'prato', 'culinario', 'culinário', 'cozinha', 'chef',
       'alimento', 'refeição', 'prato pronto',
       // English
       'recipe', 'food', 'cooking', 'cuisine', 'chef', 'restaurant',
@@ -136,19 +136,19 @@ const NICHE_KEYWORDS: Record<string, {
   ecommerce: {
     keywords: [
       // Português
-      'loja', 'shop', 'compre', 'produto', 'promo', 'desconto',
+      'loja', 'shop', 'compre', 'promo', 'desconto',
       'venda', 'ecommerce', 'shopping', 'compra', 'oferta',
       // English
-      'shop', 'store', 'buy', 'purchase', 'product', 'sale',
+      'shop', 'store', 'buy', 'purchase', 'sale',
       'discount', 'ecommerce', 'shopping', 'offer', 'deal',
       // Deutsch
-      'versand', 'produkt', 'rabatt', 'laden', 'kaufen',
+      'versand', 'rabatt', 'laden', 'kaufen',
       'online shop', 'ecommerce',
       // Español
-      'tienda', 'compra', 'producto', 'rebaja', 'oferta',
+      'tienda', 'compra', 'rebaja', 'oferta',
       'descuento', 'venta',
       // Français
-      'boutique', 'achat', 'produit', 'réduction', 'vente'
+      'boutique', 'achat', 'réduction', 'vente'
     ],
     weight: 1.0
   },
@@ -172,8 +172,8 @@ const NICHE_KEYWORDS: Record<string, {
   geral: {
     keywords: [
       // Fallback genérico — sempre match com qualquer coisa
-      'produto', 'serviço', 'empresa', 'negócio', 'solução',
-      'service', 'product', 'solution', 'business', 'offer'
+      'serviço', 'empresa', 'negócio', 'solução',
+      'service', 'solution', 'business'
     ],
     weight: 0.2 // Peso MUITO baixo — fallback apenas
   }
@@ -207,7 +207,9 @@ export function detectNicheWithScores(url: string = '', copy: string = ''): Nich
   for (const [niche, { keywords }] of Object.entries(NICHE_KEYWORDS)) {
     for (const keyword of keywords) {
       // Usar word boundaries para evitar falsos positivos
-      const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+      // Escapar caracteres especiais na regex
+      const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escapedKeyword}\\b`, 'gi');
       const matchCount = (textForAnalysis.match(regex) || []).length;
 
       if (matchCount > 0) {
@@ -255,9 +257,9 @@ export function detectNicheWithScores(url: string = '', copy: string = ''): Nich
       continue;
     }
 
-    // Fórmula: (matches / maxMatches) * weight
+    // Fórmula: (matches / maxMatches) * weight, clampado a 1.0
     const weight = NICHE_KEYWORDS[niche]?.weight || 1.0;
-    confidences[niche] = (matches / maxMatches) * weight;
+    confidences[niche] = Math.min(1.0, (matches / maxMatches) * weight);
   }
 
   // Ordenar nichos por confiança DECRESCENTE
@@ -292,6 +294,15 @@ export function detectNicheWithScores(url: string = '', copy: string = ''): Nich
   }
 
   // Retornar resultado estruturado
+  // Garantir que palavras-chave principais do nicho estejam incluídas
+  const foundKeywords = Array.from(new Set(nicheScores[finalPrimary].keywords));
+  const nicheNameAsKeyword = finalPrimary; // Use o nome do nicho como keyword principal
+
+  // Inserir o nome do nicho se não estiver já presente nos keywords encontrados
+  if (!foundKeywords.includes(nicheNameAsKeyword)) {
+    foundKeywords.unshift(nicheNameAsKeyword);
+  }
+
   return {
     primary: {
       niche: finalPrimary,
@@ -301,7 +312,7 @@ export function detectNicheWithScores(url: string = '', copy: string = ''): Nich
       niche: secondaryNiche,
       confidence: Math.min(1.0, Math.round(secondaryConfidence * 100) / 100)
     } : null,
-    keywords: Array.from(new Set(nicheScores[finalPrimary].keywords)).slice(0, 5),
+    keywords: foundKeywords.slice(0, 5),
     source,
     debugInfo: {
       urlMatches: urlKeywords,
@@ -324,7 +335,8 @@ function extractKeywordsFromText(text: string): string[] {
 
   for (const { keywords } of Object.values(NICHE_KEYWORDS)) {
     for (const keyword of keywords) {
-      const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+      const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escapedKeyword}\\b`, 'gi');
       if (regex.test(text)) {
         found.push(keyword);
       }

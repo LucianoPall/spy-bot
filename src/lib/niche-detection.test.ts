@@ -228,7 +228,7 @@ describe('Niche Detection System v2', () => {
       ];
 
       let passed = 0;
-      let total = testCases.length;
+      const total = testCases.length;
 
       testCases.forEach(([url, copy, expectedNiche, minConfidence]) => {
         const scores = detectNicheWithScores(url, copy);
