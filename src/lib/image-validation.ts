@@ -3,11 +3,21 @@
 
 export interface Clone {
   id: string;
+  user_id?: string;
   created_at: string;
+  niche?: string;
+  original_url?: string;
+  original_copy?: string;
+  original_image?: string;
   image1?: string;
   image2?: string;
   image3?: string;
-  [key: string]: any;
+  variante1?: string;
+  variante2?: string;
+  variante3?: string;
+  strategic_analysis?: string | object | null;
+  campaign_id?: string | null;
+  clone_tags?: string[] | null;
 }
 
 /**

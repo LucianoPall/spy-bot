@@ -1,4 +1,4 @@
-export type ImageType = 'generated' | 'uploaded' | 'unsplash' | 'placeholder';
+export type ImageType = 'generated' | 'uploaded' | 'unsplash' | 'placeholder' | 'fallback';
 export type ImageProvider = 'dalle' | 'supabase' | 'unsplash' | 'fallback';
 export type FallbackReason = 'upload_failed' | 'unsplash_failed' | 'dalle_failed';
 
@@ -41,4 +41,39 @@ export interface StrategicAnalysis {
   persuasion_structure: string;  // "PAS — Problema, Agitação, Solução"
   angle: string;                 // "Prova social com depoimento"
   offer_type: string;            // "Lead magnet + upsell"
+}
+
+// ============================================
+// AI Improvements — Niche Detection Scores
+// ============================================
+
+export interface NicheScores {
+  primary: {
+    niche: string;
+    confidence: number; // 0-1 (0.92 = 92% confiança)
+  };
+  secondary: {
+    niche: string;
+    confidence: number;
+  } | null;
+  keywords: string[]; // Palavras-chave encontradas
+  source: 'url' | 'copy'; // Onde foi detectado
+  debugInfo?: {
+    urlMatches?: string[];
+    copyMatches?: string[];
+    totalMatches?: number;
+  };
+}
+
+// ============================================
+// Filtros Avançados (Feature v3)
+// ============================================
+
+export interface FilterOptions {
+  niche?: string;
+  dateRange?: {
+    from: Date;
+    to: Date;
+  };
+  status?: 'favorite' | 'all';
 }

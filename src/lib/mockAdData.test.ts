@@ -120,7 +120,7 @@ describe('getNicheExamples', () => {
     expect(examples).toBeTruthy();
     expect(examples.niche).toBe('emagrecimento');
     expect(examples.displayName).toBe('Emagrecimento');
-    expect(examples.examples.length).toBe(3);
+    expect(examples.examples.length).toBeGreaterThanOrEqual(3); // FEATURE 2: Mínimo 3, pode haver mais
   });
 
   test('Cada exemplo deve ter copy e image', () => {

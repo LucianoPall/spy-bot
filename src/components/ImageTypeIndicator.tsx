@@ -1,8 +1,9 @@
 import React from 'react';
 import { AlertTriangle, Sparkles } from 'lucide-react';
+import type { ImageType } from '@/lib/types';
 
 interface ImageTypeIndicatorProps {
-  type: 'generated' | 'placeholder' | 'fallback';
+  type: ImageType;
   niche?: string;
 }
 

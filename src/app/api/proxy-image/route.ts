@@ -179,6 +179,9 @@ export async function GET(req: Request) {
                     }
                 });
             }
+
+            // ✅ Se fallbackUrl é null, retornar PNG transparente direto
+            throw new Error('Fallback URL inválido');
         } catch (fallbackError) {
             console.error('[proxy-image] ❌ Fallback também falhou, retornando PNG transparente');
 

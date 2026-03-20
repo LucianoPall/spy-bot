@@ -11,9 +11,12 @@ import {
 
 interface Clone {
     id: string;
+    user_id?: string;
     niche?: string;
     created_at: string;
     original_url?: string;
+    original_copy?: string;
+    original_image?: string;
     image1?: string;
     image2?: string;
     image3?: string;
@@ -28,7 +31,9 @@ interface Clone {
         persuasion_structure?: string;
         angle?: string;
         offer_type?: string;
-    };
+    } | null | string;
+    campaign_id?: string | null;
+    clone_tags?: string[] | null;
 }
 
 // Fallback image para quando nenhuma imagem conseguir carregar
@@ -99,6 +104,29 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                 cacheHitRate: metrics.cacheHits / ((metrics.cacheHits + metrics.cacheMisses) || 1),
                 failureRate: metrics.imagesFailed / (metrics.imagesLoaded + metrics.imagesFailed || 1)
             });
+        }
+    };
+
+    // Tentar recuperar imagem expirada
+    const attemptImageRecovery = async (cloneId: string) => {
+        try {
+            console.log('[RECOVERY] Tentando recuperar imagens expiradas para', cloneId);
+            const response = await fetch('/api/regenerate-images', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ generationId: cloneId })
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                console.log('[RECOVERY] ✅ Imagens recuperadas com sucesso', result);
+                // Recarregar página para mostrar novas imagens
+                window.location.reload();
+            } else {
+                console.warn('[RECOVERY] Falha ao recuperar imagens');
+            }
+        } catch (err) {
+            console.error('[RECOVERY] Erro ao recuperar imagens', err);
         }
     };
 
@@ -298,6 +326,9 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
         return url;
     };
 
+    // Verificar se todas as imagens falharam
+    const allImagesFailed = failedImages.has('image1') && failedImages.has('image2') && failedImages.has('image3');
+
     return (
         <div className={`bg-[#111] border rounded-[10px] p-2 sm:p-3 md:p-4 lg:p-5 transition-all flex flex-col group min-h-[180px] ${isExpanded ? 'border-green-500/50 md:col-span-2 lg:col-span-3' : 'border-[#222] hover:border-[#333]'}`}>
             <div className="flex justify-between items-start mb-2 md:mb-3">
@@ -328,6 +359,14 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                     <div className="w-full aspect-[4/3] sm:aspect-square md:aspect-video lg:aspect-square bg-[#0a0a0a] rounded-md mb-2 sm:mb-3 md:mb-4 overflow-hidden border border-[#1a1a1a] relative transition-colors">
                         <img src={getImageUrl('image1')} alt="Thumbnail do Criativo 1" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" onError={(e) => { e.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                         <div className="absolute bottom-2 left-2 bg-black/80 backdrop-blur-sm text-[9px] sm:text-[10px] text-green-400 px-2 py-1 rounded border border-green-500/20 font-bold uppercase">Capa do Clone</div>
+
+                        {/* Aviso se imagem expirou */}
+                        {allImagesFailed && (
+                            <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-2">
+                                <AlertCircle size={24} className="text-orange-500" />
+                                <p className="text-[10px] text-orange-400 text-center px-2">Imagens expiradas</p>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex-1 mb-2 sm:mb-3 md:mb-4">
@@ -335,6 +374,16 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                             {clone.variante1 || "Sem copy"}
                         </p>
                     </div>
+
+                    {/* Botão de Recuperação de Imagens (se todas falharam) */}
+                    {allImagesFailed && (
+                        <button
+                            onClick={() => attemptImageRecovery(clone.id)}
+                            className="w-full mt-2 pt-1 sm:pt-2 text-center font-bold text-orange-400 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 px-2 sm:px-3 py-2 sm:py-2.5 md:py-3 rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs sm:text-sm md:text-base mb-2"
+                        >
+                            🔧 Recuperar Imagens
+                        </button>
+                    )}
 
                     {/* Botão Clonar Novamente Grande e Visível */}
                     {clone.original_url && (
@@ -371,7 +420,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                             <div className="w-full aspect-square bg-[#050505] rounded-lg mb-4 overflow-hidden border border-[#222] relative">
                                 <img src={getImageUrl('image1')} alt="V1" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                             </div>
-                            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar min-h-[80px] md:min-h-[120px]">
                                 <p className="text-xs md:text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{clone.variante1}</p>
                             </div>
                             <button onClick={() => handleCopy(clone.variante1, 'v1')} className="mt-4 w-full flex items-center justify-center gap-2 bg-[#151515] hover:bg-[#252525] border border-[#2a2a2a] py-2 md:py-2.5 rounded-lg text-gray-300 font-medium text-xs md:text-sm transition-colors">
@@ -391,7 +440,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                             <div className="w-full aspect-square bg-[#050505] rounded-lg mb-4 overflow-hidden border border-[#222] relative">
                                 <img src={getImageUrl('image2')} alt="V2" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                             </div>
-                            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar min-h-[80px] md:min-h-[120px]">
                                 <p className="text-xs md:text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{clone.variante2}</p>
                             </div>
                             <button onClick={() => handleCopy(clone.variante2, 'v2')} className="mt-4 w-full flex items-center justify-center gap-2 bg-[#151515] hover:bg-[#252525] border border-[#2a2a2a] py-2 md:py-2.5 rounded-lg text-gray-300 font-medium text-xs md:text-sm transition-colors">
@@ -411,7 +460,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                             <div className="w-full aspect-[4/5] bg-[#050505] rounded-lg mb-4 overflow-hidden border border-[#222] relative">
                                 <img src={getImageUrl('image3')} alt="V3" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                             </div>
-                            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar min-h-[80px] md:min-h-[120px]">
                                 <p className="text-xs md:text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{clone.variante3}</p>
                             </div>
                             <button onClick={() => handleCopy(clone.variante3, 'v3')} className="mt-4 w-full flex items-center justify-center gap-2 bg-[#151515] hover:bg-[#252525] border border-[#2a2a2a] py-2 md:py-2.5 rounded-lg text-gray-300 font-medium text-xs md:text-sm transition-colors">
@@ -447,14 +496,28 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
 
 function StrategicAnalysisCollapsible({ analysis }: { analysis: NonNullable<Clone['strategic_analysis']> }) {
   const [open, setOpen] = useState(false);
+
+  // Parsing seguro de análise estratégica (pode ser string JSON ou objeto)
+  let parsedAnalysis: Record<string, string> = {};
+  try {
+    if (typeof analysis === 'string') {
+      parsedAnalysis = JSON.parse(analysis);
+    } else if (typeof analysis === 'object' && analysis !== null) {
+      parsedAnalysis = analysis as Record<string, string>;
+    }
+  } catch (e) {
+    console.error('Erro ao parsear análise estratégica:', e);
+    return null;
+  }
+
   const fields = [
-    { label: "Gancho", value: analysis.hook },
-    { label: "Promessa", value: analysis.promise },
-    { label: "Emoção", value: analysis.emotion },
-    { label: "CTA", value: analysis.cta },
-    { label: "Estrutura", value: analysis.persuasion_structure },
-    { label: "Ângulo", value: analysis.angle },
-    { label: "Tipo de Oferta", value: analysis.offer_type },
+    { label: "Gancho", value: parsedAnalysis.hook },
+    { label: "Promessa", value: parsedAnalysis.promise },
+    { label: "Emoção", value: parsedAnalysis.emotion },
+    { label: "CTA", value: parsedAnalysis.cta },
+    { label: "Estrutura", value: parsedAnalysis.persuasion_structure },
+    { label: "Ângulo", value: parsedAnalysis.angle },
+    { label: "Tipo de Oferta", value: parsedAnalysis.offer_type },
   ].filter(f => f.value);
 
   if (fields.length === 0) return null;

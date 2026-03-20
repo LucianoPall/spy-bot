@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Search, Loader2, Copy, CheckCircle2, AlertTriangle, Download, Brain } from "lucide-react";
 import { useSearchParams } from "next/navigation";
+import type { StrategicAnalysis } from "@/lib/types";
 import ActiveProfileBanner from "@/components/ActiveProfileBanner";
 import KPICards from "@/components/KPICards";
 import ImageTypeIndicator from "@/components/ImageTypeIndicator";
@@ -13,21 +14,12 @@ interface GeneratedImage {
     niche?: string;
 }
 
-interface StrategicAnalysis {
-    hook?: string;
-    promise?: string;
-    emotion?: string;
-    cta?: string;
-    persuasion_structure?: string;
-    angle?: string;
-    offer_type?: string;
-}
-
 interface GenerationResult {
     originalAd?: {
         copy?: string;
         image?: string;
         isMockData?: boolean;
+        isManualInput?: boolean;
         warning?: string;
     };
     generatedVariations?: { variante1?: string; variante2?: string; variante3?: string };
@@ -42,7 +34,11 @@ interface GenerationResult {
 export default function DashboardPage() {
     const searchParams = useSearchParams();
     const [url, setUrl] = useState("");
+    const [manualCopy, setManualCopy] = useState("");
+    const [manualImage, setManualImage] = useState("");
+    const [inputMode, setInputMode] = useState<"url" | "manual">("url");
     const [loading, setLoading] = useState(false);
+    const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
     const [result, setResult] = useState<GenerationResult | null>(null);
     const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
@@ -56,7 +52,19 @@ export default function DashboardPage() {
 
     const handleCloning = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!url) return;
+
+        // Validação do mode
+        if (inputMode === "url" && !url) return;
+        if (inputMode === "manual") {
+            if (!manualCopy || manualCopy.trim().length < 20) {
+                setError("Copy deve ter no mínimo 20 caracteres");
+                return;
+            }
+            if (manualImage && !isValidImageUrl(manualImage)) {
+                setError("URL da imagem deve ser válida (http:// ou https://)");
+                return;
+            }
+        }
 
         setLoading(true);
         setError("");
@@ -79,10 +87,26 @@ export default function DashboardPage() {
                 console.error("Erro ao acessar localStorage:", storageError);
             }
 
+            // Log do mode usado
+            if (inputMode === "manual") {
+                console.log('[Dashboard] 🔧 MODO MANUAL ATIVADO - Usando copy fornecido pelo usuário', {
+                    copyLength: manualCopy.length,
+                    hasImage: !!manualImage,
+                    imageUrl: manualImage?.substring(0, 80)
+                });
+            }
+
             const response = await fetch("/api/spy-engine", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ adUrl: url, brandProfile }),
+                body: JSON.stringify({
+                    adUrl: inputMode === "url" ? url : "manual://provided",
+                    brandProfile,
+                    // Novos campos para suportar input manual
+                    manualCopy: inputMode === "manual" ? manualCopy : undefined,
+                    manualImage: inputMode === "manual" ? manualImage : undefined,
+                    isManualInput: inputMode === "manual"
+                }),
             });
 
             const data = await response.json();
@@ -143,11 +167,35 @@ export default function DashboardPage() {
         }
     };
 
+    const isValidImageUrl = (urlString: string): boolean => {
+        try {
+            const urlObj = new URL(urlString);
+            return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+        } catch {
+            return false;
+        }
+    };
+
     const copyToClipboard = (text: string | undefined, index: number) => {
         if (!text) return;
         navigator.clipboard.writeText(text);
         setCopiedIndex(index);
         setTimeout(() => setCopiedIndex(null), 2000);
+    };
+
+    const handleSaveClone = async () => {
+        if (!result || !url) {
+            return;
+        }
+
+        // ✅ Clone já foi salvo automaticamente durante a clonagem!
+        // Apenas limpar a UI e deixar pronto para novo clone
+        setSaving(true);
+        setTimeout(() => {
+            setResult(null);
+            setUrl('');
+            setSaving(false);
+        }, 800);
     };
 
     return (
@@ -165,29 +213,126 @@ export default function DashboardPage() {
 
             {/* Área de Input */}
             <div className="bg-[#111] border border-[#222] rounded-xl p-2 sm:p-3 md:p-4 lg:p-5 shadow-2xl mb-8">
-                <form onSubmit={handleCloning} className="flex flex-col md:flex-row gap-2 sm:gap-3 md:gap-4">
-                    <div className="relative flex-1">
-                        <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-500" />
-                        <input
-                            type="url"
-                            required
-                            value={url}
-                            onChange={(e) => setUrl(e.target.value)}
-                            placeholder="Cole aqui o link do FaceAds (https://www.facebook.com/ads/library/?id=...)"
-                            className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg py-4 pl-12 pr-4 text-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                        />
-                    </div>
+
+                {/* Toggle: Modo URL vs Manual */}
+                <div className="flex gap-2 mb-6 border-b border-[#222] pb-4">
                     <button
-                        type="submit"
-                        disabled={loading}
-                        className="md:w-48 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-bold py-4 px-6 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-70"
+                        onClick={() => {
+                            setInputMode("url");
+                            setError("");
+                        }}
+                        className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                            inputMode === "url"
+                                ? "bg-green-500 text-white"
+                                : "bg-[#222] text-gray-400 hover:text-gray-300"
+                        }`}
                     >
-                        {loading ? (
-                            <><Loader2 className="animate-spin" size={20} /> Rodando IA...</>
-                        ) : (
-                            <>Clonar Agora</>
-                        )}
+                        <Search className="inline mr-2" size={16} />
+                        Extrair URL
                     </button>
+                    <button
+                        onClick={() => {
+                            setInputMode("manual");
+                            setError("");
+                        }}
+                        className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                            inputMode === "manual"
+                                ? "bg-green-500 text-white"
+                                : "bg-[#222] text-gray-400 hover:text-gray-300"
+                        }`}
+                    >
+                        📝 Colar Manualmente
+                    </button>
+                </div>
+
+                <form onSubmit={handleCloning} className="flex flex-col gap-4">
+                    {inputMode === "url" ? (
+                        /* Modo URL */
+                        <div className="flex flex-col md:flex-row gap-2 sm:gap-3 md:gap-4">
+                            <div className="relative flex-1">
+                                <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-500" />
+                                <input
+                                    type="url"
+                                    value={url}
+                                    onChange={(e) => setUrl(e.target.value)}
+                                    placeholder="Cole aqui o link do FaceAds (https://www.facebook.com/ads/library/?id=...)"
+                                    className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg py-4 pl-12 pr-4 text-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
+                                />
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={loading || !url}
+                                className="md:w-48 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-bold py-4 px-6 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-70"
+                            >
+                                {loading ? (
+                                    <><Loader2 className="animate-spin" size={20} /> Rodando IA...</>
+                                ) : (
+                                    <>Clonar Agora</>
+                                )}
+                            </button>
+                        </div>
+                    ) : (
+                        /* Modo Manual */
+                        <div className="flex flex-col gap-4">
+                            {/* Copy Input */}
+                            <div className="flex flex-col">
+                                <label className="text-gray-300 font-medium mb-2">Copy do Anúncio *</label>
+                                <textarea
+                                    value={manualCopy}
+                                    onChange={(e) => setManualCopy(e.target.value.substring(0, 2000))}
+                                    placeholder="Cole aqui o texto/copy do anúncio que você quer clonar..."
+                                    className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg py-4 px-4 text-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 font-mono text-sm resize-none h-32"
+                                />
+                                <div className="flex justify-between mt-2">
+                                    <span className="text-xs text-gray-500">
+                                        Mínimo: 20 caracteres | Máximo: 2000
+                                    </span>
+                                    <span className={`text-xs font-medium ${
+                                        manualCopy.length < 20 ? "text-red-400" :
+                                        manualCopy.length > 2000 ? "text-red-400" :
+                                        "text-green-400"
+                                    }`}>
+                                        {manualCopy.length}/2000
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Image URL Input */}
+                            <div className="flex flex-col">
+                                <label className="text-gray-300 font-medium mb-2">URL da Imagem (Opcional)</label>
+                                <div className="relative">
+                                    <input
+                                        type="url"
+                                        value={manualImage}
+                                        onChange={(e) => setManualImage(e.target.value)}
+                                        placeholder="https://example.com/imagem.jpg"
+                                        className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg py-3 px-4 text-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
+                                    />
+                                    {manualImage && (
+                                        <span className={`absolute right-4 top-1/2 transform -translate-y-1/2 text-lg ${
+                                            isValidImageUrl(manualImage) ? "text-green-500" : "text-red-500"
+                                        }`}>
+                                            {isValidImageUrl(manualImage) ? "✓" : "✗"}
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="text-xs text-gray-500 mt-2">Deixe em branco para usar imagens geradas automaticamente</p>
+                            </div>
+
+                            {/* Submit Button */}
+                            <button
+                                type="submit"
+                                disabled={loading || manualCopy.length < 20}
+                                className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-bold py-4 px-6 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-70"
+                            >
+                                {loading ? (
+                                    <><Loader2 className="animate-spin" size={20} /> Rodando IA...</>
+                                ) : (
+                                    <>🚀 Clonar com Copy Manual</>
+                                )}
+                            </button>
+                        </div>
+                    )}
                 </form>
 
                 {error && (
@@ -202,13 +347,27 @@ export default function DashboardPage() {
             {result && (
                 <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
 
-                    {/* Aviso se dados são mock/gerados */}
-                    {result.originalAd?.isMockData && (
-                        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 flex gap-3">
-                            <div className="flex-shrink-0 text-yellow-500 text-xl">⚠️</div>
+                    {/* Aviso se dados são mock/gerados OU entrada manual */}
+                    {(result.originalAd?.isMockData || result.originalAd?.isManualInput) && (
+                        <div className={`rounded-lg p-4 flex gap-3 border ${
+                            result.originalAd?.isManualInput
+                                ? 'bg-green-500/10 border-green-500/30'
+                                : 'bg-yellow-500/10 border-yellow-500/30'
+                        }`}>
+                            <div className={`flex-shrink-0 text-xl ${
+                                result.originalAd?.isManualInput ? 'text-green-500' : 'text-yellow-500'
+                            }`}>
+                                {result.originalAd?.isManualInput ? '✅' : '⚠️'}
+                            </div>
                             <div className="flex-1">
-                                <p className="text-yellow-200 font-semibold">Dados Gerados Automaticamente</p>
-                                <p className="text-yellow-100/80 text-sm mt-1">
+                                <p className={`font-semibold ${
+                                    result.originalAd?.isManualInput ? 'text-green-200' : 'text-yellow-200'
+                                }`}>
+                                    {result.originalAd?.isManualInput ? 'Dados Fornecidos por Você' : 'Dados Gerados Automaticamente'}
+                                </p>
+                                <p className={`text-sm mt-1 ${
+                                    result.originalAd?.isManualInput ? 'text-green-100/80' : 'text-yellow-100/80'
+                                }`}>
                                     {result.originalAd?.warning || "O anúncio original não pôde ser extraído completamente. As imagens e textos abaixo foram gerados automaticamente baseado em análise de padrões similares."}
                                 </p>
                             </div>
@@ -296,6 +455,26 @@ export default function DashboardPage() {
                         />
                     </div>
 
+                    {/* Botão Limpar (Clone já foi salvo automaticamente) */}
+                    <div className="mt-6 flex gap-3">
+                        <button
+                            onClick={handleSaveClone}
+                            disabled={saving}
+                            className="flex-1 flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg font-semibold transition-all"
+                        >
+                            {saving ? (
+                                <>
+                                    <Loader2 size={20} className="animate-spin" />
+                                    Limpando...
+                                </>
+                            ) : (
+                                <>
+                                    ✅ Clone Salvo! (Ir para Próximo)
+                                </>
+                            )}
+                        </button>
+                    </div>
+
                 </div>
             )}
         </div>
@@ -355,15 +534,37 @@ function VariationCard({
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
             const blob = await response.blob();
+            const fileName = `CopySpy_Arte_Variante${index}.png`;
             const blobUrl = window.URL.createObjectURL(blob);
 
-            const link = document.createElement("a");
-            link.href = blobUrl;
-            link.download = `CopySpy_Arte_Variante${index}.png`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            window.URL.revokeObjectURL(blobUrl);
+            try {
+                // Método seguro: criar link, clicar, e remover sem appendChild
+                const link = document.createElement("a");
+                link.href = blobUrl;
+                link.download = fileName;
+
+                // Usar triggerEvent em vez de adicionar ao DOM
+                if (document.createEvent) {
+                    const event = document.createEvent('MouseEvents');
+                    event.initEvent('click', true, true);
+                    link.dispatchEvent(event);
+                } else {
+                    // Fallback para navegadores antigos
+                    link.click?.();
+                }
+
+                console.log(`[Download Variante ${index}] Download disparado`);
+            } finally {
+                // Sempre limpar a URL do blob
+                setTimeout(() => {
+                    try {
+                        window.URL.revokeObjectURL(blobUrl);
+                    } catch (e) {
+                        console.warn(`Erro ao revogar URL (${index})`, e);
+                    }
+                }, 100);
+            }
+
             console.log(`[Download Variante ${index}] Download concluído com sucesso`);
         } catch (error) {
             console.error(`[Download Variante ${index}] Erro ao baixar imagem:`, error);

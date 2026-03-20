@@ -3,12 +3,6 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   serverExternalPackages: ["apify-client"],
   images: {
-    localPatterns: [
-      {
-        pathname: "/api/proxy-image",
-        search: "**",  // Aceita qualquer query string
-      },
-    ],
     remotePatterns: [
       {
         protocol: "http",
@@ -20,7 +14,21 @@ const nextConfig: NextConfig = {
       {
         protocol: "http",
         hostname: "localhost",
-        port: "3001",  // Adicionar porta 3001 também
+        port: "3001",
+        pathname: "/api/proxy-image**",
+        search: "**",
+      },
+      {
+        protocol: "http",
+        hostname: "localhost",
+        port: "3002",
+        pathname: "/api/proxy-image**",
+        search: "**",
+      },
+      {
+        protocol: "http",
+        hostname: "localhost",
+        port: "3003",
         pathname: "/api/proxy-image**",
         search: "**",
       },
@@ -39,6 +47,7 @@ const nextConfig: NextConfig = {
       {
         protocol: "https",
         hostname: "oaidalleapiprodscus.blob.core.windows.net",
+        pathname: "/**",
       },
       {
         protocol: "https",

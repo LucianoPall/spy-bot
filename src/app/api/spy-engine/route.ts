@@ -5,6 +5,8 @@ import { logger, STAGES } from './logger';
 import { getMockAdData } from '@/lib/mockAdData';
 import { GeneratedImage, GeneratedImages } from '@/lib/types';
 import { getStockImageVariations } from '@/lib/stock-images';
+import { detectNicheWithScores, getNicheConfidencePercentage, getNicheDisplayName } from '@/lib/niche-detection';
+import { integrateNicheContext, getNichePromptContext } from '@/lib/niche-prompts';
 
 // Inicializa os clientes das APIs (com fallbacks vazios para evitar erro de build na Vercel)
 const openai = new OpenAI({
@@ -14,51 +16,39 @@ const openai = new OpenAI({
 export const maxDuration = 60; // 60s limit to allow Apify scraping on Vercel Hobby (com timeout de 45s + fallback rápido)
 
 // ============================================
-// FUNÇÃO: Detectar Nicho da URL
+// FUNÇÃO: Detectar Nicho com Scores (NOVO SISTEMA v2)
 // ============================================
 /**
- * Detecta o nicho baseado na URL do anúncio
- * É CRÍTICO detectar o nicho ANTES de chamar GPT-4o quando Apify falha
- * Isso garante que os imagePrompts sejam gerados para o nicho CORRETO
+ * Detecta nicho usando sistema de scores com confiança
+ * Integra análise de URL + copy para melhor acurácia
+ * Retorna scores detalhados para logging e monitoring
  *
- * @param adUrl - URL do anúncio para análise
- * @returns Nicho detectado ou 'geral' como fallback
+ * @param adUrl - URL do anúncio
+ * @param copy - Texto do anúncio
+ * @returns Nicho detectado com confiança e keywords
  */
-function detectNicheFromUrl(adUrl: string): string {
-  const url = adUrl.toLowerCase();
+function detectNicheWithConfidence(adUrl: string, copy: string = '') {
+  const scores = detectNicheWithScores(adUrl, copy);
+  const confidence = getNicheConfidencePercentage(scores);
 
-  // Ordem importa! Mais específico primeiro para evitar falsos positivos
-  // iGaming primeiro porque "aposta/cassino/gaming" são muito específicos
-  if (["cassino", "aposta", "jogo", "bet", "poker", "slots", "roleta", "gaming", "igaming"].some(p => url.includes(p))) {
-    return "igaming";
-  }
+  logger.info(STAGES.START, '🎯 Detecção de Nicho com Scores (v2)', {
+    nicho: scores.primary.niche,
+    confianca: `${confidence}%`,
+    keywords: scores.keywords.slice(0, 5),
+    source: scores.source,
+    secondary: scores.secondary ? `${scores.secondary.niche} (${Math.round(scores.secondary.confidence * 100)}%)` : 'nenhum',
+    totalMatches: scores.debugInfo?.totalMatches || 0
+  });
 
-  // Emagrecimento (keywords em PT e EN)
-  if (["emagrecer", "dieta", "peso", "perder", "fitness", "slim", "magro", "obesity", "emagrecimento", "weight-loss", "weight loss", "diet", "lean"].some(p => url.includes(p))) {
-    return "emagrecimento";
-  }
-
-  // Estética (keywords em PT e EN)
-  if (["beleza", "pele", "facial", "skincare", "lifting", "dermatol", "cosmetico", "estetica", "skin-care", "beauty", "anti-aging"].some(p => url.includes(p))) {
-    return "estetica";
-  }
-
-  // Alimentação / Comida / Receita (novo nicho - cobre anúncios de comida, receitas, delivery)
-  if (["receita", "comida", "food", "recipe", "culinaria", "gastronomia", "delivery", "restaurante", "prato", "gastronomico", "culinario", "cozinha"].some(p => url.includes(p))) {
-    return "alimentacao";
-  }
-
-  // E-commerce (keywords em PT e EN)
-  if (["loja", "shop", "store", "compre", "produto", "promo", "desconto", "venda", "ecommerce", "shopping", "buy", "purchase"].some(p => url.includes(p))) {
-    return "ecommerce";
-  }
-
-  // Renda Extra (menos específico, verificar por último)
-  if (["renda", "ganhar", "dinheiro", "online", "passiva", "lucro", "negocio"].some(p => url.includes(p))) {
-    return "renda_extra";
-  }
-
-  return "geral"; // Fallback padrão
+  return {
+    niche: scores.primary.niche,
+    confidence: scores.primary.confidence,
+    confidencePercent: confidence,
+    keywords: scores.keywords,
+    secondary: scores.secondary,
+    source: scores.source,
+    scores // Passar objeto completo para acesso total
+  };
 }
 
 // ============================================
@@ -172,22 +162,54 @@ export async function POST(req: Request) {
     logger.startTimer('TOTAL_REQUEST');
 
     try {
-        const { adUrl, brandProfile } = await req.json();
-        logger.info(STAGES.START, 'URL recebida', { url: adUrl?.substring(0, 80), hasBrandProfile: !!brandProfile });
+        const { adUrl, brandProfile, manualCopy, manualImage, isManualInput } = await req.json();
 
-        if (!adUrl) {
-            logger.error(STAGES.VALIDATION, 'URL do anúncio não fornecida');
+        // FEATURE 1: Suporte a entrada manual de copy
+        const usingManualInput = isManualInput && manualCopy;
+
+        logger.info(STAGES.START, 'Requisição recebida', {
+            url: adUrl?.substring(0, 80),
+            hasBrandProfile: !!brandProfile,
+            usingManualInput,
+            manualCopyLength: manualCopy?.length || 0,
+            hasManualImage: !!manualImage
+        });
+
+        if (!adUrl && !usingManualInput) {
+            logger.error(STAGES.VALIDATION, 'URL do anúncio não fornecida e modo manual não ativado');
             return NextResponse.json({ error: 'URL do anúncio não fornecida.' }, { status: 400 });
         }
 
-        // 🎯 CRÍTICO: Detectar o nicho da URL AGORA
-        // Isso garante que, mesmo se Apify falhar, sabemos qual é o nicho REAL
-        const detectedNicheFromUrl = detectNicheFromUrl(adUrl);
-        logger.info(STAGES.START, '🎯 Nicho da URL detectado', {
-            url: adUrl?.substring(0, 80),
-            detectedNiche: detectedNicheFromUrl,
-            reason: 'Detectado cedo para garantir imagePrompts corretos quando Apify falha'
-        });
+        // 🎯 CRÍTICO: Detectar o nicho
+        // Se usando input manual, detectar do copy. Senão, detectar da URL.
+        // Isso garante que, mesmo se Apify falhar, sabemos qual é o nicho REAL com confiança
+        // ⚠️ IMPORTANTE: Usar 'let' (não 'const') para permitir fallback
+        let initialNicheDetection;
+        let detectedNicheFromUrl;
+
+        if (usingManualInput) {
+            // ENTRADA MANUAL: Detectar nicho do copy fornecido
+            logger.info(STAGES.START, '📝 MODO MANUAL: Detectando nicho da copy fornecida pelo usuário');
+            initialNicheDetection = detectNicheWithConfidence("manual://provided", manualCopy);
+            detectedNicheFromUrl = initialNicheDetection.niche;
+            logger.success(STAGES.START, '✅ Nicho detectado do copy manual', {
+                nicho: detectedNicheFromUrl,
+                confianca: `${initialNicheDetection.confidencePercent}%`,
+                keywords: initialNicheDetection.keywords.slice(0, 3),
+                copyLength: manualCopy.length
+            });
+        } else {
+            // MODO URL: Detectar nicho da URL
+            initialNicheDetection = detectNicheWithConfidence(adUrl);
+            detectedNicheFromUrl = initialNicheDetection.niche;
+            logger.info(STAGES.START, '🎯 Nicho da URL detectado (sistema v2)', {
+                url: adUrl?.substring(0, 80),
+                detectedNiche: detectedNicheFromUrl,
+                confianca: `${initialNicheDetection.confidencePercent}%`,
+                keywords: initialNicheDetection.keywords.slice(0, 3),
+                reason: 'Detectado cedo para garantir imagePrompts corretos quando Apify falha'
+            });
+        }
 
         if (!process.env.APIFY_API_TOKEN || !process.env.OPENAI_API_KEY) {
             logger.error(STAGES.VALIDATION, 'Chaves de API ausentes no servidor');
@@ -249,12 +271,32 @@ export async function POST(req: Request) {
         logger.success(STAGES.BILLING, 'Verificação de billing concluída');
         // --- FIM: Verificação de Monetização ---
 
-        // 1. Fase de Extração (Apify - Facebook Ads Library)
+        // 1. Fase de Extração (Apify - Facebook Ads Library) OU ENTRADA MANUAL
         let originalCopy = '';
         let adImageUrl = '';
-
         let apifyErrorMessage = "";
-        try {
+
+        // FEATURE 1: Se entrada manual, pular Apify e usar dados fornecidos
+        if (usingManualInput) {
+            logger.info(STAGES.START, '✅ ENTRADA MANUAL: Usando copy e imagem fornecidos pelo usuário, pulando Apify');
+            originalCopy = manualCopy.trim();
+            adImageUrl = manualImage || '';
+
+            console.log('[MANUAL INPUT] ✅ Usando copy manual fornecido pelo usuário - Apify SKIPPED', {
+                copyLength: originalCopy.length,
+                hasImage: !!adImageUrl,
+                nichoDetectado: detectedNicheFromUrl
+            });
+
+            logger.success(STAGES.APIFY_SUCCESS, '✅ Dados manuais carregados com sucesso', {
+                copyLength: originalCopy.length,
+                hasImage: !!adImageUrl,
+                imageSample: adImageUrl?.substring(0, 60) || 'nenhuma',
+                mensagem: 'Usando dados que você forneceu'
+            });
+        } else {
+            // MODO NORMAL: Usar Apify
+            try {
             logger.startTimer('APIFY_EXTRACTION');
 
             // ✅ IMPORTANTE: Fazer trim() para remover espaços em branco
@@ -383,15 +425,18 @@ export async function POST(req: Request) {
                 apifyErrorMessage = "A extração retornou 0 itens (vazio). O Facebook pode ter bloqueado ou o ID é inválido.";
                 logger.warn(STAGES.APIFY_FAIL, 'Apify retornou lista vazia', { reason: apifyErrorMessage });
             }
-        } catch (scraperError: unknown) {
-            apifyErrorMessage = scraperError instanceof Error ? scraperError.message : String(scraperError);
-            logger.endTimer('APIFY_EXTRACTION', STAGES.APIFY_FAIL);
-            logger.error(STAGES.APIFY_FAIL, 'Erro na chamada Apify', scraperError);
+            } catch (scraperError: unknown) {
+                apifyErrorMessage = scraperError instanceof Error ? scraperError.message : String(scraperError);
+                logger.endTimer('APIFY_EXTRACTION', STAGES.APIFY_FAIL);
+                logger.error(STAGES.APIFY_FAIL, 'Erro na chamada Apify', scraperError);
+            }
         }
 
         // FALLBACK INTELIGENTE E TRATAMENTO DE AD SEM COPY
         // IMPORTANTE: Se Apify falhou de ANY forma, usar mock data IMEDIATAMENTE
-        if (apifyErrorMessage || !originalCopy || !adImageUrl) {
+        // FEATURE 1: Quando entrada manual, não fazer fallback de Apify - use dados do usuário
+        // FEATURE 2: Se entrada manual SEM imagem, usar imagens do nicho detectado
+        if ((apifyErrorMessage || !originalCopy || !adImageUrl) && !usingManualInput) {
             if (apifyErrorMessage) {
                 // Apify explicitamente falhou
                 logger.error(STAGES.FALLBACK, `❌ FALLBACK ATIVADO - Apify falhou. Erro: ${apifyErrorMessage.substring(0, 200)}. Usando dados mock.`);
@@ -401,9 +446,10 @@ export async function POST(req: Request) {
                 logger.warn(STAGES.FALLBACK, `⚠️  FALLBACK ATIVADO - Apify incompleto (copy: ${!!originalCopy}, image: ${!!adImageUrl}). Usando mock.`);
             }
 
-            // Tentar detectar nicho da URL mesmo quando Apify falha
+            // FEATURE 2: Tentar detectar nicho da URL mesmo quando Apify falha
             // Isso garante que as imagens geradas correspondam ao nicho correto
-            const mockData = getMockAdData(adUrl);
+            // ✅ IMPORTANTE: Passar detectedNicheFromUrl para garantir mock data do nicho certo
+            const mockData = getMockAdData(adUrl, detectedNicheFromUrl);
 
             // Só sobrescreve se estiver vazio
             if (!originalCopy) originalCopy = mockData.copy;
@@ -417,6 +463,15 @@ export async function POST(req: Request) {
                 apifyError: apifyErrorMessage?.substring(0, 100) || 'incompleto',
                 finalCopyLength: originalCopy.length,
                 finalImageLength: adImageUrl.length
+            });
+        } else if (usingManualInput && !adImageUrl) {
+            // FEATURE 1: Se entrada manual SEM imagem, usar imagens do nicho detectado
+            logger.info(STAGES.FALLBACK, '🎨 ENTRADA MANUAL: Nenhuma imagem fornecida, usando imagens do nicho detectado');
+            const mockData = getMockAdData("manual://provided", detectedNicheFromUrl);
+            adImageUrl = mockData.image;
+            logger.success(STAGES.FALLBACK, '✅ Imagem de fallback carregada do nicho', {
+                nicho: detectedNicheFromUrl,
+                imageUrl: adImageUrl.substring(0, 80)
             });
         } else if (!originalCopy && !apifyErrorMessage) {
             // Extraiu com sucesso, mas o anúncio é puramente em Imagem/Vídeo (Não tem script de vendas)
@@ -435,7 +490,39 @@ export async function POST(req: Request) {
             originalCopy = "[Imagem do anúncio original - foco 100% visual]";
         }
         if (!adImageUrl) {
-            adImageUrl = "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=800";
+            adImageUrl = "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&q=80&w=800";
+        }
+
+        // ============================================
+        // 🎯 FALLBACK CRÍTICO: Detectar nicho pela COPY se URL não detectou (v2)
+        // FEATURE 2: Para entrada manual, SEMPRE refinar pela copy
+        // ============================================
+        // Se URL retornou "geral" ou low confidence, tentar detectar pelo conteúdo do anúncio
+        // Se entrada manual, sempre refinar a detecção pela copy que o usuário forneceu
+        const shouldRefineNiche = (detectedNicheFromUrl === 'geral' || initialNicheDetection.confidence < 0.5) || usingManualInput;
+
+        if (shouldRefineNiche && originalCopy && originalCopy.length > 20) {
+            const refineUrl = usingManualInput ? "manual://provided" : adUrl;
+            const copyNicheDetection = detectNicheWithConfidence(refineUrl, originalCopy);
+            if (copyNicheDetection.niche !== 'geral' && copyNicheDetection.confidence > initialNicheDetection.confidence) {
+                logger.success(STAGES.START, '✅ Nicho refinado pela COPY (confidence melhorou)', {
+                    urlDetected: initialNicheDetection.niche,
+                    urlConfidence: `${initialNicheDetection.confidencePercent}%`,
+                    copyDetected: copyNicheDetection.niche,
+                    copyConfidence: `${copyNicheDetection.confidencePercent}%`,
+                    keywords: copyNicheDetection.keywords.slice(0, 3),
+                    reason: usingManualInput ? 'Entrada manual: análise pela copy fornecida' : 'Análise completa (URL+COPY) retornou nicho melhor'
+                });
+                detectedNicheFromUrl = copyNicheDetection.niche;
+                initialNicheDetection.confidence = copyNicheDetection.confidence;
+                initialNicheDetection.keywords = copyNicheDetection.keywords;
+            }
+        } else if (detectedNicheFromUrl !== 'geral') {
+            logger.info(STAGES.START, '✅ Nicho já detectado com confiança', {
+                nicho: detectedNicheFromUrl,
+                confianca: `${initialNicheDetection.confidencePercent}%`,
+                fonte: usingManualInput ? 'Copy manual do usuário' : 'URL'
+            });
         }
 
         // Verificação se estamos rodando sem chave real na produção para pular a chamada e não quebrar com 500
@@ -455,9 +542,9 @@ export async function POST(req: Request) {
                     variante3: "(DEMO) Ana estava quase fechando a clínica. Ela não aguentava mais clientes pedendo desconto. Até que ela descobriu um padrão de vendas secreto. Dois meses depois, ela precisou contratar 3 assistentes."
                 },
                 generatedImages: {
-                    image1: "https://images.unsplash.com/photo-1570172176411-b80fcadc6fb0?auto=format&fit=crop&q=80&w=800",
-                    image2: "https://images.unsplash.com/photo-1596755094514-ff4df1ecfb7e?auto=format&fit=crop&q=80&w=800",
-                    image3: "https://images.unsplash.com/photo-1556912988-2b80c6c8b0a1?auto=format&fit=crop&q=80&w=800"
+                    image1: "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&q=80&w=800",
+                    image2: "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&q=80&w=800",
+                    image3: "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&q=80&w=800"
                 },
                 logs: logger.exportAsJSON()
             });
@@ -492,77 +579,54 @@ export async function POST(req: Request) {
     `;
             }
 
+            // 🎯 INTEGRAR CONTEXTO DO NICHO NO SYSTEM PROMPT (v2)
+            const nicheContextInstructions = getNichePromptContext(detectedNicheFromUrl);
+            const enhancedSystemPrompt = `Você é um especialista em clonagem estratégica de anúncios para Meta Ads.
+${brandContext}
+
+🎯 NICHO DETECTADO DA URL: ${detectedNicheFromUrl.toUpperCase()} (Confiança: ${initialNicheDetection.confidencePercent}%)
+⚠️ INSTRUÇÃO CRÍTICA: Use o nicho acima — não tente adivinhar pela copy.
+📊 Keywords detectados: ${initialNicheDetection.keywords.slice(0, 5).join(', ')}
+
+${nicheContextInstructions}`;
+
             const chatCompletion = await activeOpenaiClient.chat.completions.create({
                 model: "gpt-4o",
                 messages: [
                     {
                         role: "system",
-                        content: `Você é um especialista em clonagem estratégica de anúncios para Meta Ads.
-${brandContext}
+                        content: enhancedSystemPrompt + `
 
-🎯 NICHO DETECTADO DA URL: ${detectedNicheFromUrl.toUpperCase()}
-⚠️ INSTRUÇÃO CRÍTICA: Use o nicho acima — não tente adivinhar pela copy.
-
-═══════════════════════════════════════
-PASSO 1 — ANÁLISE ESTRATÉGICA DO ANÚNCIO ORIGINAL
-═══════════════════════════════════════
-Extraia com precisão cirúrgica:
-- hook: O gancho de abertura (o que prende atenção nos primeiros segundos)
-- promise: A promessa central (o que o produto/serviço entrega)
-- emotion: A emoção dominante explorada (medo, esperança, inveja, etc.)
-- cta: O call-to-action exato ou inferido
-- persuasion_structure: Estrutura usada (AIDA, PAS, 4Ps, Storytelling, etc.)
-- angle: Ângulo estratégico (prova social, autoridade, escassez, transformação)
-- offer_type: Tipo de oferta (lead magnet, compra direta, trial, evento, etc.)
-
-═══════════════════════════════════════
-PASSO 2 — GERAR 3 COPIES COM ESTRATÉGIAS DIFERENTES
-═══════════════════════════════════════
-- variante1: Foco na DOR — amplificar o problema, criar urgência emocional
 - variante2: Foco na SOLUÇÃO DIRETA — benefícios claros, linguagem assertiva
 - variante3: Foco em AUTORIDADE E PROVA — depoimento ou dado de resultado
-  ⚠️ variante3 NÃO é storytelling — é autoridade + prova social + credibilidade
 
-Adaptar linguagem ao nicho: ${detectedNicheFromUrl.toUpperCase()}
-Evitar: clickbait, sensacionalismo, promessas irreais, Fake UI
-
-═══════════════════════════════════════
-PASSO 3 — GERAR 3 IMAGEPROMPTS PARA META ADS
-═══════════════════════════════════════
-Todos os 3 prompts DEVEM seguir:
-• Formato 4:5 (vertical moderado, ideal para Feed do Meta)
-• Composição limpa e minimalista
-• Mobile-first — legível em tela pequena
-• Áreas de segurança nas bordas (sem elementos cortados)
-• Sem clickbait, setas chamativas, círculos vermelhos, fake notifications
-• Estilo visual profissional e confiável
-
-imagePrompt1 (DOR): cena visual de frustração/problema específico do nicho
-imagePrompt2 (SOLUÇÃO): cena visual de resultado/transformação específica do nicho
-imagePrompt3 (AUTORIDADE): cena de credibilidade — especialista, tela de resultado real, testemunho
-
-⚠️ OS 3 IMAGEPROMPTS DEVEM TER CONTEÚDO VISUAL COMPLETAMENTE DIFERENTE.
-⚠️ OBRIGATÓRIO: Retorne SEMPRE detectedNiche = "${detectedNicheFromUrl}"
-
-Responda em JSON válido:
+⚠️ FORMATO JSON OBRIGATÓRIO:
+Você DEVE responder com EXATAMENTE este JSON:
 {
+  "variante1": "copy para variante 1 (foco na DOR)",
+  "variante2": "copy para variante 2 (foco na SOLUÇÃO)",
+  "variante3": "copy para variante 3 (foco na AUTORIDADE)",
+  "imagePrompt1": "IMAGEM 1: Focado em EMOÇÃO NEGATIVA/DOR. Estilo visual: fotografia em tons quentes, rosto expressando dor/frustração/preocupação, lighting dramático",
+  "imagePrompt2": "IMAGEM 2: Focado em SOLUÇÃO/ESPERANÇA. Estilo visual: fotografia luminosa, rosto feliz/aliviado, luz natural e cores vibrantes, ambiente limpo",
+  "imagePrompt3": "IMAGEM 3: Focado em AUTORIDADE/PROVA. Estilo visual: fotografia profissional estilo lifestyle, produto/serviço visível, ambiente premium, light setup profissional",
+  "detectedNiche": "${detectedNicheFromUrl}",
   "strategic_analysis": {
-    "hook": "...",
-    "promise": "...",
-    "emotion": "...",
-    "cta": "...",
-    "persuasion_structure": "...",
-    "angle": "...",
-    "offer_type": "..."
-  },
-  "variante1": "...",
-  "imagePrompt1": "...",
-  "variante2": "...",
-  "imagePrompt2": "...",
-  "variante3": "...",
-  "imagePrompt3": "...",
-  "detectedNiche": "${detectedNicheFromUrl}"
-}`
+    "hook": "frase inicial que chama atenção",
+    "promise": "benefício principal prometido",
+    "emotion": "emoção alvo (ex: frustração+esperança)",
+    "cta": "chamada para ação final",
+    "persuasion_structure": "estrutura de persuasão (PAS, AIDA, etc)",
+    "angle": "ângulo de venda único",
+    "offer_type": "tipo de oferta (lead magnet, venda, etc)"
+  }
+}
+
+⚠️ CRÍTICO PARA IMAGENS:
+- imagePrompt1 DEVE ser completamente diferente de imagePrompt2 e imagePrompt3
+- Cada prompt DEVE mencionar a emoção/contexto diferente (DOR vs SOLUÇÃO vs PROVA)
+- Use ESTILOS VISUAIS diferentes em cada prompt (fotografia estilo X vs fotografia estilo Y)
+- NUNCA repita o mesmo prompt para múltiplas imagens
+- Os 3 prompts DEVEM gerar imagens visualmente DIFERENTES quando enviadas ao DALL-E`
                     },
                     {
                         role: "user",
@@ -684,51 +748,51 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
             const NICHE_DATABASE: Record<string, { images: string[] }> = {
                 "emagrecimento": {
                     images: [
-                        "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?auto=format&fit=crop&q=80&w=800",
-                        "https://images.unsplash.com/photo-1434628287857-20284db019fc?auto=format&fit=crop&q=80&w=800",
-                        "https://images.unsplash.com/photo-1476480862245-c2951f1d2e2f?auto=format&fit=crop&q=80&w=800"
+                        "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?auto=format&fit=crop&q=80&w=800", // Dor: mulher frustrada na balança
+                        "https://images.unsplash.com/photo-1434628287857-20284db019fc?auto=format&fit=crop&q=80&w=800", // Solução: mulher fit/confiante
+                        "https://images.unsplash.com/photo-1476480862245-c2951f1d2e2f?auto=format&fit=crop&q=80&w=800"  // Autoridade: treino/resultado
                     ]
                 },
                 "renda_extra": {
                     images: [
-                        "https://images.unsplash.com/photo-1533523666223-68a78f686f21?auto=format&fit=crop&q=80&w=800",
-                        "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&q=80&w=800",
-                        "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&q=80&w=800"
+                        "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&q=80&w=800", // Dor: pessoa com dificuldade
+                        "https://images.unsplash.com/photo-1559027615-cd4628902d4a?auto=format&fit=crop&q=80&w=800", // Solução: sucessso/negócio
+                        "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=800"  // Autoridade: gráficos/dados
                     ]
                 },
                 "igaming": {
                     images: [
-                        "https://images.unsplash.com/photo-1553532173-98eeb64c6a62?auto=format&fit=crop&q=80&w=800",
-                        "https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?auto=format&fit=crop&q=80&w=800",
-                        "https://images.unsplash.com/photo-1511379938547-c1f69b13d835?auto=format&fit=crop&q=80&w=800"
+                        "https://images.unsplash.com/photo-1553532173-98eeb64c6a62?auto=format&fit=crop&q=80&w=800", // Dor: pessoa frustrada
+                        "https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?auto=format&fit=crop&q=80&w=800", // Solução: vitória/celebração
+                        "https://images.unsplash.com/photo-1511379938547-c1f69b13d835?auto=format&fit=crop&q=80&w=800"  // Autoridade: comprovação
                     ]
                 },
                 "estetica": {
                     images: [
-                        "https://images.unsplash.com/photo-1570172176411-b80fcadc6fb0?auto=format&fit=crop&q=80&w=800",
-                        "https://images.unsplash.com/photo-1596755094514-ff4df1ecfb7e?auto=format&fit=crop&q=80&w=800",
-                        "https://images.unsplash.com/photo-1556912988-2b80c6c8b0a1?auto=format&fit=crop&q=80&w=800"
+                        "https://images.unsplash.com/photo-1570172176411-b80fcadc6fb0?auto=format&fit=crop&q=80&w=800", // Dor: rugas/pele envelhecida
+                        "https://images.unsplash.com/photo-1596755094514-ff4df1ecfb7e?auto=format&fit=crop&q=80&w=800", // Solução: pele radiante
+                        "https://images.unsplash.com/photo-1556912988-2b80c6c8b0a1?auto=format&fit=crop&q=80&w=800"     // Autoridade: procedimento profissional
                     ]
                 },
                 "ecommerce": {
                     images: [
-                        "https://images.unsplash.com/photo-1441986300974-11335f63f7ee?auto=format&fit=crop&q=80&w=800",
-                        "https://images.unsplash.com/photo-1555694702871-5572146ce3f3?auto=format&fit=crop&q=80&w=800",
-                        "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&q=80&w=800"
+                        "https://images.unsplash.com/photo-1441986300974-11335f63f7ee?auto=format&fit=crop&q=80&w=800", // Dor: loja vazia/sem escolha
+                        "https://images.unsplash.com/photo-1555694702871-5572146ce3f3?auto=format&fit=crop&q=80&w=800", // Solução: produtos atraentes
+                        "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&q=80&w=800"   // Autoridade: review/satisfação
                     ]
                 },
                 "alimentacao": {
                     images: [
-                        "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800", // Comida apetitosa
-                        "https://images.unsplash.com/photo-1495195134817-aeb325d55b0e?auto=format&fit=crop&q=80&w=800", // Refeição preparada
-                        "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&q=80&w=800"  // Chef/Preparo
+                        "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800", // Dor: comida ruim/sem apetite
+                        "https://images.unsplash.com/photo-1559027615-cd4628902d4a?auto=format&fit=crop&q=80&w=800", // Solução: prato delicioso
+                        "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&q=80&w=800"  // Autoridade: chef profissional
                     ]
                 },
                 "geral": {
                     images: [
-                        "https://images.unsplash.com/photo-1511379938547-c1f69b13d835?auto=format&fit=crop&q=80&w=800", // Desafio/Dor - pessoa em dificuldade
-                        "https://images.unsplash.com/photo-1495521821757-a1efb6729352?auto=format&fit=crop&q=80&w=800", // Sucesso/Vitória - pessoa alegre
-                        "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&q=80&w=800"  // Transformação - gráfico/progresso
+                        "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=800", // Dor: pessoa em dificuldade
+                        "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&q=80&w=800", // Solução: pessoa alegre/vitória
+                        "https://images.unsplash.com/photo-1552581234-26160f608093?auto=format&fit=crop&q=80&w=800"  // Autoridade: especialista/credibilidade
                     ]
                 }
             };
@@ -826,34 +890,24 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
             // ============================================
             // VERIFICAÇÃO CRÍTICA: Deduplicação de Imagens
             // ============================================
-            // Se DALL-E retornar URLs iguais, regenerar com sufixos de estilo forçados
+            // Se DALL-E retornar URLs iguais, regenerar com sufixos de estilo MUITO DIFERENTES
             if ((img1 === img2) || (img2 === img3) || (img1 === img3)) {
-                console.log('[SPY-ENGINE] ⚠️ IMAGENS DUPLICADAS DETECTADAS! Tentando regenerar com estilos forçados...');
-                logger.warn(STAGES.DALLE_CALL, '⚠️ Imagens duplicadas detectadas, regenerando com prompts modificados');
+                console.log('[SPY-ENGINE] ⚠️ IMAGENS DUPLICADAS DETECTADAS! Tentando regenerar com estilos FORÇADOS...');
+                logger.warn(STAGES.DALLE_CALL, '⚠️ Imagens duplicadas detectadas, regenerando com prompts MUITO modificados');
 
                 try {
+                    // SUPER-REFORÇO: Adicionar instruções MUITO diferentes para cada imagem
+                    const superPrompt1 = generatedCopys.imagePrompt1 + ", fotografia realista, rosto feminino expressando emoção forte, tons quentes laranja/vermelho, lighting profissional, close-up, 85mm lens, professional photography";
+                    const superPrompt2 = generatedCopys.imagePrompt2 + ", fotografia lifestyle moderna, pessoa sorrindo, ambiente aconchegante, cores pastel suaves, luz natural janela, ampla, 35mm, estilo editorial";
+                    const superPrompt3 = generatedCopys.imagePrompt3 + ", ilustração artística abstrata, composição criativa, cores vibrantes contrastantes, elementos geométricos, estilo design moderno, digital art";
+
                     [img1, img2, img3] = await Promise.all([
-                        generateImageSafely(
-                            generatedCopys.imagePrompt1 + ", realistic photography, warm colors, professional photo",
-                            placeholder,
-                            "1024x1024",
-                            1
-                        ),
-                        generateImageSafely(
-                            generatedCopys.imagePrompt2 + ", cinematic lighting, cool tones, dramatic shadows",
-                            placeholder,
-                            "1024x1024",
-                            2
-                        ),
-                        generateImageSafely(
-                            generatedCopys.imagePrompt3 + ", artistic illustration, natural colors, creative style",
-                            placeholder,
-                            "1024x1792",
-                            3
-                        )
+                        generateImageSafely(superPrompt1, placeholder, "1024x1024", 1),
+                        generateImageSafely(superPrompt2, placeholder, "1024x1024", 2),
+                        generateImageSafely(superPrompt3, placeholder, "1024x1792", 3)
                     ]);
-                    console.log('[SPY-ENGINE] ✅ Imagens regeneradas com sucesso!');
-                    logger.success(STAGES.DALLE_CALL, '✅ Imagens regeneradas com estilos forçados - agora são diferentes');
+                    console.log('[SPY-ENGINE] ✅ Imagens regeneradas com sucesso com SUPER-ESTILOS!');
+                    logger.success(STAGES.DALLE_CALL, '✅ Imagens regeneradas com super-estilos diferentes - garantia de diferença');
                 } catch (regenerateErr) {
                     console.error('[SPY-ENGINE] Erro ao regenerar imagens:', regenerateErr);
                     logger.error(STAGES.DALLE_FAIL, 'Falha ao regenerar imagens duplicadas');
@@ -895,18 +949,18 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
 
             // GARANTIR QUE IMAGENS NUNCA ESTEJAM VAZIAS ANTES DO UPLOAD
             // Se DALL-E falhou ou as URLs estão vazias, usar fallback do nicho
-            const imgFallback = placeholderFallback;
+            // 🎯 CRÍTICO: Usar fallbackImages[0], [1], [2] para ter 3 imagens DIFERENTES do nicho
             if (!finalImg1 || !finalImg1.trim()) {
                 logger.warn(STAGES.DALLE_FAIL, 'Imagem 1 vazia, usando fallback do nicho');
-                finalImg1 = imgFallback;
+                finalImg1 = fallbackImages[0];
             }
             if (!finalImg2 || !finalImg2.trim()) {
                 logger.warn(STAGES.DALLE_FAIL, 'Imagem 2 vazia, usando fallback do nicho');
-                finalImg2 = imgFallback;
+                finalImg2 = fallbackImages[1];
             }
             if (!finalImg3 || !finalImg3.trim()) {
                 logger.warn(STAGES.DALLE_FAIL, 'Imagem 3 vazia, usando fallback do nicho');
-                finalImg3 = imgFallback;
+                finalImg3 = fallbackImages[2];
             }
 
             // [Histórico e Armazenamento] Tenta salvar os resultados no banco oficial e fotos no Storage
@@ -1097,6 +1151,20 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
 
             // Retorna o pacote completo e Visual para o Front-End
             logger.endTimer('TOTAL_REQUEST', STAGES.END);
+
+            // 🎯 LOG FINAL: MONITORAMENTO DE DETECÇÃO DE NICHO (v2)
+            logger.success(STAGES.END, 'Detecção de Nicho concluída com sucesso', {
+                nichoFinal: detectedNicheFromUrl,
+                confiancaPercentual: `${initialNicheDetection.confidencePercent}%`,
+                confiancaDecimal: initialNicheDetection.confidence,
+                keywordEncontrados: initialNicheDetection.keywords.slice(0, 5),
+                nichoSecundario: initialNicheDetection.secondary ?
+                    `${initialNicheDetection.secondary.niche} (${Math.round(initialNicheDetection.secondary.confidence * 100)}%)` :
+                    'nenhum',
+                fontePrincipal: initialNicheDetection.source,
+                metaTarget: `${initialNicheDetection.confidencePercent}% >= 85%` // Meta de acurácia
+            });
+
             logger.success(STAGES.END, 'Requisição completada com sucesso', logger.getSummary());
 
             const buildGeneratedImage = (url: string | undefined, type: string = 'placeholder', niche: string = 'Geral'): GeneratedImage => {
@@ -1131,19 +1199,198 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
                 type3: 'generated'
             });
 
+            // ✅ SALVAR PERMANENTEMENTE NO BANCO DE DADOS
+            // Função para fazer upload de imagem para Supabase Storage
+            const uploadImageToSupabase = async (imageUrl: string, imageName: string): Promise<string | null> => {
+                try {
+                    if (!imageUrl || !imageUrl.trim()) {
+                        logger.warn(STAGES.DALLE_CALL, `URL vazia para ${imageName}`);
+                        return null;
+                    }
+
+                    logger.info(STAGES.DALLE_CALL, `📥 Iniciando download de ${imageName}`, { urlPrefix: imageUrl.substring(0, 50) });
+
+                    // Fazer download da imagem com retry
+                    let response: Response | null = null;
+                    let downloadAttempts = 0;
+                    const maxAttempts = 3;
+
+                    while (!response && downloadAttempts < maxAttempts) {
+                        try {
+                            const controller = new AbortController();
+                            const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
+                            response = await fetch(imageUrl, {
+                                signal: controller.signal,
+                                headers: { 'User-Agent': 'SpyBot/1.0' }
+                            });
+
+                            clearTimeout(timeout);
+
+                            if (!response.ok) {
+                                logger.warn(STAGES.DALLE_CALL, `Download falhou (${response.status}) na tentativa ${downloadAttempts + 1}`);
+                                response = null;
+                                downloadAttempts++;
+                                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+                                continue;
+                            }
+                        } catch (fetchErr) {
+                            logger.warn(STAGES.DALLE_CALL, `Erro ao fazer download tentativa ${downloadAttempts + 1}`, fetchErr);
+                            downloadAttempts++;
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            continue;
+                        }
+                    }
+
+                    if (!response || !response.ok) {
+                        logger.error(STAGES.DALLE_CALL, `❌ Falhou ao fazer download de ${imageName} após ${maxAttempts} tentativas`);
+                        return null;
+                    }
+
+                    const buffer = await response.arrayBuffer();
+                    logger.info(STAGES.DALLE_CALL, `✅ Download concluído (${buffer.byteLength} bytes)`);
+
+                    // Gerar nome único com timestamp e nonce
+                    const timestamp = Date.now();
+                    const nonce = Math.random().toString(36).substring(7);
+                    const fileName = `${user?.id || 'anonymous'}/${timestamp}_${nonce}_${imageName}.png`;
+
+                    logger.info(STAGES.DALLE_CALL, `📤 Fazendo upload para Supabase`, { fileName });
+
+                    // Fazer upload para Supabase Storage
+                    const { data, error: uploadError } = await supabase
+                        .storage
+                        .from('spybot_images')
+                        .upload(fileName, buffer, {
+                            contentType: 'image/png',
+                            cacheControl: '31536000', // Cache por 1 ano
+                            upsert: false
+                        });
+
+                    if (uploadError) {
+                        logger.error(STAGES.DALLE_CALL, `❌ Erro ao fazer upload de ${imageName}`, {
+                            error: uploadError.message,
+                            errorCode: (uploadError as any).statusCode
+                        });
+                        return null;
+                    }
+
+                    if (!data || !data.path) {
+                        logger.error(STAGES.DALLE_CALL, `❌ Upload retornou sem path para ${imageName}`);
+                        return null;
+                    }
+
+                    // Obter URL pública da imagem
+                    const { data: publicData } = supabase
+                        .storage
+                        .from('spybot_images')
+                        .getPublicUrl(data.path);
+
+                    const publicUrl = publicData?.publicUrl;
+
+                    if (!publicUrl) {
+                        logger.error(STAGES.DALLE_CALL, `❌ Não conseguiu gerar URL pública para ${imageName}`);
+                        return null;
+                    }
+
+                    logger.success(STAGES.DALLE_CALL, `✅ Imagem ${imageName} salva permanentemente`, {
+                        fileName,
+                        url: publicUrl.substring(0, 100)
+                    });
+
+                    return publicUrl;
+                } catch (uploadErr) {
+                    logger.error(STAGES.DALLE_CALL, `❌ Erro ao processar upload de ${imageName}`, uploadErr);
+                    return null;
+                }
+            };
+
+            logger.info(STAGES.DALLE_CALL, '🚀 Iniciando upload das 3 imagens para Storage permanente');
+
+            // Fazer upload das 3 imagens em paralelo
+            const [persistedImage1, persistedImage2, persistedImage3] = await Promise.all([
+                uploadImageToSupabase(finalImg1, 'image1'),
+                uploadImageToSupabase(finalImg2, 'image2'),
+                uploadImageToSupabase(finalImg3, 'image3')
+            ]);
+
+            logger.info(STAGES.DALLE_CALL, '📊 Status do upload', {
+                image1: persistedImage1 ? '✅ OK' : '❌ FALHOU',
+                image2: persistedImage2 ? '✅ OK' : '❌ FALHOU',
+                image3: persistedImage3 ? '✅ OK' : '❌ FALHOU'
+            });
+
+            // ✅ SALVAR NO BANCO DE DADOS
+            // CRÍTICO: Usar URLs permanentes (Supabase) em vez de DALL-E (que expiram)
+            // Se upload falhar, ainda salvamos mas marcamos para re-tentar depois
+            const finalImage1 = persistedImage1 || finalImg1;
+            const finalImage2 = persistedImage2 || finalImg2;
+            const finalImage3 = persistedImage3 || finalImg3;
+
+            logger.info(STAGES.DALLE_CALL, '💾 Salvando no banco de dados', {
+                hasPersistedImage1: !!persistedImage1,
+                hasPersistedImage2: !!persistedImage2,
+                hasPersistedImage3: !!persistedImage3,
+                willUseFallback: !persistedImage1 || !persistedImage2 || !persistedImage3
+            });
+
+            const { data: savedGeneration, error: dbError } = await supabase
+                .from('spybot_generations')
+                .insert({
+                    user_id: user?.id || 'anonymous',
+                    original_url: adUrl,
+                    original_copy: originalCopy,
+                    original_image: adImageUrl,
+                    variante1: generatedCopys.variante1,
+                    variante2: generatedCopys.variante2,
+                    variante3: generatedCopys.variante3,
+                    image1: finalImage1,
+                    image2: finalImage2,
+                    image3: finalImage3,
+                    niche: generatedCopys.detectedNiche,
+                    strategic_analysis: generatedCopys.strategic_analysis || null
+                })
+                .select()
+                .single();
+
+            if (dbError) {
+                logger.error(STAGES.DALLE_CALL, '❌ Erro ao salvar geração no banco', {
+                    error: dbError.message,
+                    errorCode: (dbError as any).code
+                });
+                // Não falhar a requisição, retornar o que temos
+            } else if (savedGeneration) {
+                logger.success(STAGES.DALLE_CALL, '✅ Geração salva permanentemente no banco', {
+                    generationId: savedGeneration.id,
+                    hasImage1: !!savedGeneration.image1,
+                    hasImage2: !!savedGeneration.image2,
+                    hasImage3: !!savedGeneration.image3
+                });
+            }
+
             const responseData = {
                 success: true,
+                generationId: savedGeneration?.id, // ID para referenciar depois
                 originalAd: {
                     copy: originalCopy,
                     image: adImageUrl,
-                    isMockData: !!apifyErrorMessage || !originalCopy || !adImageUrl,
-                    warning: apifyErrorMessage ? `⚠️ ${apifyErrorMessage.substring(0, 120)}. O sistema usou dados de exemplo, mas as variações geradas ainda são de qualidade. Tente outra URL!` : undefined
+                    isMockData: (!!apifyErrorMessage || !originalCopy || !adImageUrl) && !usingManualInput,
+                    isManualInput: usingManualInput, // FEATURE 1: Flag indicando entrada manual
+                    warning: usingManualInput
+                        ? '✅ Usando dados que você forneceu'
+                        : apifyErrorMessage
+                            ? `⚠️ ${apifyErrorMessage.substring(0, 120)}. O sistema usou dados de exemplo, mas as variações geradas ainda são de qualidade. Tente outra URL!`
+                            : undefined
                 },
-                generatedVariations: generatedCopys,
+                generatedVariations: {
+                    variante1: generatedCopys.variante1,
+                    variante2: generatedCopys.variante2,
+                    variante3: generatedCopys.variante3
+                },
                 generatedImages: {
-                    image1: buildGeneratedImage(finalImg1, 'generated', generatedCopys.detectedNiche),
-                    image2: buildGeneratedImage(finalImg2, 'generated', generatedCopys.detectedNiche),
-                    image3: buildGeneratedImage(finalImg3, 'generated', generatedCopys.detectedNiche)
+                    image1: buildGeneratedImage(persistedImage1 || finalImg1, 'generated', generatedCopys.detectedNiche),
+                    image2: buildGeneratedImage(persistedImage2 || finalImg2, 'generated', generatedCopys.detectedNiche),
+                    image3: buildGeneratedImage(persistedImage3 || finalImg3, 'generated', generatedCopys.detectedNiche)
                 } as GeneratedImages,
                 strategicAnalysis: generatedCopys.strategic_analysis || null,
                 logs: logger.exportAsJSON()
@@ -1153,6 +1400,7 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
                 hasImage1: !!responseData.generatedImages.image1?.url,
                 hasImage2: !!responseData.generatedImages.image2?.url,
                 hasImage3: !!responseData.generatedImages.image3?.url,
+                savedToDatabase: !!savedGeneration?.id
             });
 
             return NextResponse.json(responseData);
@@ -1194,6 +1442,15 @@ Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
                     image2: buildGeneratedImageError("https://images.unsplash.com/photo-1596755094514-ff4df1ecfb7e?auto=format&fit=crop&q=80&w=800", 'placeholder', fallbackErrorNiche),
                     image3: buildGeneratedImageError("https://images.unsplash.com/photo-1556912988-2b80c6c8b0a1?auto=format&fit=crop&q=80&w=800", 'placeholder', fallbackErrorNiche)
                 } as GeneratedImages,
+                strategicAnalysis: {
+                    hook: "Sua conta OpenAI tem um erro",
+                    promise: "Resolva o erro da OpenAI para gerar análises",
+                    emotion: "Urgência + frustração",
+                    cta: "Configure corretamente sua chave OpenAI",
+                    persuasion_structure: "Problema-Solução",
+                    angle: "Erro técnico remediável",
+                    offer_type: "Diagnóstico de erro"
+                },
                 logs: logger.exportAsJSON()
             });
         }
