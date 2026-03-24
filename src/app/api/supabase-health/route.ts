@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { createClient as createServerClient } from '@/utils/supabase/server';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -6,7 +7,30 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+/**
+ * Endpoint para verificar saúde do Supabase
+ * AUTENTICADO: Apenas administradores podem acessar
+ */
 export async function GET() {
+  // Verificar autenticação e permissão de admin
+  const supabaseAuth = await createServerClient();
+  const { data: { user } } = await supabaseAuth.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json(
+      { error: 'Unauthorized - Authentication required' },
+      { status: 401 }
+    );
+  }
+
+  // Verificar se é admin
+  const isAdmin = user.email === process.env.ADMIN_EMAIL;
+  if (!isAdmin) {
+    return NextResponse.json(
+      { error: 'Forbidden - Admin access required' },
+      { status: 403 }
+    );
+  }
   const result = {
     status: 'checking',
     timestamp: new Date().toISOString(),

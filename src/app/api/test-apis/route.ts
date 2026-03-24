@@ -23,8 +23,20 @@ interface TestResults {
 /**
  * Endpoint para testar status de todas as APIs externas
  * GET /api/test-apis
+ * AUTENTICADO: Requer usuário logado (evita abuso de APIs pagas)
  */
 export async function GET(req: Request) {
+  // Verificar autenticação
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json(
+      { error: 'Unauthorized - Authentication required' },
+      { status: 401 }
+    );
+  }
+
   const results: TestResults = {
     timestamp: new Date().toISOString(),
     openai: { status: 'testing...', details: null, error: null },

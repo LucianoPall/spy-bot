@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import HistoryCard from "@/components/HistoryCard";
-import AdvancedFilters from "@/components/AdvancedFilters";
+import VirtualizedHistoryGallery from "@/components/VirtualizedHistoryGallery";
 import { FilterOptions } from "@/lib/types";
 
 interface Clone {
@@ -24,11 +23,11 @@ interface Clone {
     clone_tags?: string[] | null;
 }
 
-interface HistoryGalleryProps {
+interface HistoryClientWrapperProps {
     initialClones: Clone[];
 }
 
-export default function HistoryGallery({ initialClones }: HistoryGalleryProps) {
+export default function HistoryClientWrapper({ initialClones }: HistoryClientWrapperProps) {
     const [advancedFilters, setAdvancedFilters] = useState<FilterOptions>({});
 
     // Descobre todos os nichos únicos extraindo da lista de clones (ignorando nulos)
@@ -70,39 +69,11 @@ export default function HistoryGallery({ initialClones }: HistoryGalleryProps) {
     }, [initialClones, advancedFilters]);
 
     return (
-        <div className="w-full space-y-4">
-            {/* Filtros Avançados */}
-            <AdvancedFilters
-                niches={uniqueNiches}
-                onFiltersChange={setAdvancedFilters}
-                onFilterReset={() => {
-                    setAdvancedFilters({});
-                }}
-            />
-
-
-            {/* Resumo de resultados */}
-            {filteredClones.length > 0 && (
-                <div className="text-xs text-gray-500 px-2">
-                    {filteredClones.length} {filteredClones.length === 1 ? "clone" : "clones"} encontrado{filteredClones.length !== 1 ? "s" : ""}
-                </div>
-            )}
-
-            {/* Grid de Cards: espaçamento responsivo para desktop */}
-            {filteredClones.length === 0 ? (
-                <div className="text-center py-16 bg-[#111]/50 border border-[#222] border-dashed rounded-[16px]">
-                    <p className="text-xs text-gray-500">Nenhum clone encontrado.</p>
-                    <button onClick={() => setAdvancedFilters({})} className="mt-2 text-green-500 text-xs hover:underline">
-                        Limpar filtros
-                    </button>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-6 w-full">
-                    {filteredClones.map((clone) => (
-                        <HistoryCard key={clone.id} clone={clone} />
-                    ))}
-                </div>
-            )}
-        </div>
+        <VirtualizedHistoryGallery
+            initialClones={initialClones}
+            uniqueNiches={uniqueNiches}
+            advancedFilters={advancedFilters}
+            onFiltersChange={setAdvancedFilters}
+        />
     );
 }

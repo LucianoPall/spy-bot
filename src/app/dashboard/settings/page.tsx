@@ -41,7 +41,7 @@ export default function SettingsPage() {
             try {
                 const stored = localStorage.getItem("spybot_brand_profile");
                 if (stored) {
-                    // eslint-disable-next-line
+                     
                     setProfile(JSON.parse(stored));
                 }
             } catch (e) {
@@ -52,14 +52,14 @@ export default function SettingsPage() {
                 const response = await fetch("/api/subscription-data");
                 if (response.ok) {
                     const data = await response.json();
-                    // eslint-disable-next-line
+                     
                     setSubscription(data);
                 }
             } catch (error) {
                 console.error("Failed to fetch subscription data:", error);
             }
 
-            // eslint-disable-next-line
+             
             setLoading(false);
         };
 

@@ -18,35 +18,24 @@ export default function KPICards() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchKPIData = async () => {
-      try {
-        const response = await fetch("/api/kpi-data");
-        if (response.ok) {
-          const data = await response.json();
-          setKpiData(data);
+    // ⚡ Lazy load - não bloqueia rendering
+    const timer = setTimeout(() => {
+      (async () => {
+        try {
+          const response = await fetch("/api/kpi-data");
+          if (response.ok) {
+            const data = await response.json();
+            setKpiData(data);
+          }
+        } catch (error) {
+          // Silent fail
+        } finally {
+          setLoading(false);
         }
-      } catch (error) {
-        console.error("Failed to fetch KPI data:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
+      })();
+    }, 1000); // Delay 1s após render
 
-    // Also read niche from localStorage
-    try {
-      const profile = localStorage.getItem("spybot_brand_profile");
-      if (profile) {
-        const parsed = JSON.parse(profile);
-        setKpiData((prev) => ({
-          ...prev,
-          niche: parsed.niche || "Não configurado",
-        }));
-      }
-    } catch (e) {
-      console.error("Failed to parse profile", e);
-    }
-
-    fetchKPIData();
+    return () => clearTimeout(timer);
   }, []);
 
   return (

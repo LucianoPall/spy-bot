@@ -13,7 +13,7 @@ export async function POST(req: Request) {
             );
         }
 
-        const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
+        const adminEmail = process.env.ADMIN_EMAIL;
 
         // Verificar se é o admin
         if (user.email !== adminEmail) {

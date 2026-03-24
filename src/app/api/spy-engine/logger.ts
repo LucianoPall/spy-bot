@@ -8,11 +8,23 @@ export interface LogEntry {
   message: string;
   data?: unknown;
   duration?: number; // em ms
+  traceId?: string; // correlation ID por request
+  userId?: string; // user ID para rastreamento
 }
 
 class Logger {
   private logs: LogEntry[] = [];
   private timers: Map<string, number> = new Map();
+  private traceId: string = '';
+  private userId: string = '';
+
+  /**
+   * Define contexto de requisição (traceId e userId)
+   */
+  setContext(traceId: string, userId?: string): void {
+    this.traceId = traceId;
+    this.userId = userId || '';
+  }
 
   /**
    * Log de informação - Passo do processo
@@ -23,11 +35,13 @@ class Logger {
       stage,
       level: 'INFO',
       message,
-      data
+      data,
+      traceId: this.traceId,
+      userId: this.userId || undefined
     };
     this.logs.push(entry);
     console.log(
-      `[${entry.timestamp}] [${stage}] ℹ️  ${message}`,
+      `[${entry.timestamp}] [${this.traceId}] [${stage}] ℹ️  ${message}`,
       data ? JSON.stringify(data) : ''
     );
   }
@@ -41,11 +55,13 @@ class Logger {
       stage,
       level: 'SUCCESS',
       message,
-      data
+      data,
+      traceId: this.traceId,
+      userId: this.userId || undefined
     };
     this.logs.push(entry);
     console.log(
-      `[${entry.timestamp}] [${stage}] ✅ ${message}`,
+      `[${entry.timestamp}] [${this.traceId}] [${stage}] ✅ ${message}`,
       data ? JSON.stringify(data) : ''
     );
   }
@@ -59,11 +75,13 @@ class Logger {
       stage,
       level: 'WARN',
       message,
-      data
+      data,
+      traceId: this.traceId,
+      userId: this.userId || undefined
     };
     this.logs.push(entry);
     console.warn(
-      `[${entry.timestamp}] [${stage}] ⚠️  ${message}`,
+      `[${entry.timestamp}] [${this.traceId}] [${stage}] ⚠️  ${message}`,
       data ? JSON.stringify(data) : ''
     );
   }
@@ -85,11 +103,13 @@ class Logger {
       stage,
       level: 'ERROR',
       message,
-      data: errorData
+      data: errorData,
+      traceId: this.traceId,
+      userId: this.userId || undefined
     };
     this.logs.push(entry);
     console.error(
-      `[${entry.timestamp}] [${stage}] ❌ ${message}`,
+      `[${entry.timestamp}] [${this.traceId}] [${stage}] ❌ ${message}`,
       errorData
     );
   }

@@ -1,1535 +1,337 @@
+/**
+ * Spy Engine API — Route Handler (REFACTORED)
+ *
+ * Orquestra os 5 services para processar anúncios Facebook
+ * Pipeline:
+ *   1. Validação + Niche detection
+ *   2. Rate limiting check
+ *   3. Billing validation
+ *   4. Apify extraction
+ *   5. OpenAI variations
+ *   6. DALL-E images
+ *   7. Storage upload
+ *   8. Database save
+ *   9. Response format
+ */
+
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { createClient } from '@/utils/supabase/server';
 import { logger, STAGES } from './logger';
 import { getMockAdData } from '@/lib/mockAdData';
-import { GeneratedImage, GeneratedImages } from '@/lib/types';
-import { getStockImageVariations } from '@/lib/stock-images';
-import { detectNicheWithScores, getNicheConfidencePercentage, getNicheDisplayName } from '@/lib/niche-detection';
-import { integrateNicheContext, getNichePromptContext } from '@/lib/niche-prompts';
+import { GeneratedImages } from '@/lib/types';
+import { detectNicheWithScores, getNicheConfidencePercentage } from '@/lib/niche-detection';
+import { getNichePromptContext } from '@/lib/niche-prompts';
+import { refundOnApifyFailure, refundOnOpenAIFailure } from './validation-refund';
+import { checkRateLimit, getLimitForRoute } from '@/lib/rate-limiter';
+import {
+  extractAdWithApify,
+  generateCopyVariations,
+  generateImagesWithDALLE,
+  loadUserBilling,
+  uploadImageToSupabase
+} from '@/services';
 
-// Inicializa os clientes das APIs (com fallbacks vazios para evitar erro de build na Vercel)
 const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY || "dummy_key_for_build",
+  apiKey: process.env.OPENAI_API_KEY || 'dummy_key_for_build',
 });
 
-export const maxDuration = 60; // 60s limit to allow Apify scraping on Vercel Hobby (com timeout de 45s + fallback rápido)
+export const maxDuration = 60;
 
-// ============================================
-// FUNÇÃO: Detectar Nicho com Scores (NOVO SISTEMA v2)
-// ============================================
 /**
- * Detecta nicho usando sistema de scores com confiança
- * Integra análise de URL + copy para melhor acurácia
- * Retorna scores detalhados para logging e monitoring
- *
- * @param adUrl - URL do anúncio
- * @param copy - Texto do anúncio
- * @returns Nicho detectado com confiança e keywords
+ * Detecta nicho usando sistema de scores
  */
 function detectNicheWithConfidence(adUrl: string, copy: string = '') {
   const scores = detectNicheWithScores(adUrl, copy);
   const confidence = getNicheConfidencePercentage(scores);
 
-  logger.info(STAGES.START, '🎯 Detecção de Nicho com Scores (v2)', {
+  logger.info(STAGES.START, '🎯 Detecção de Nicho', {
     nicho: scores.primary.niche,
     confianca: `${confidence}%`,
-    keywords: scores.keywords.slice(0, 5),
-    source: scores.source,
-    secondary: scores.secondary ? `${scores.secondary.niche} (${Math.round(scores.secondary.confidence * 100)}%)` : 'nenhum',
-    totalMatches: scores.debugInfo?.totalMatches || 0
+    keywords: scores.keywords.slice(0, 5)
   });
 
   return {
     niche: scores.primary.niche,
     confidence: scores.primary.confidence,
-    confidencePercent: confidence,
-    keywords: scores.keywords,
-    secondary: scores.secondary,
-    source: scores.source,
-    scores // Passar objeto completo para acesso total
+    confidencePercent: confidence
   };
 }
 
-// ============================================
-// FUNÇÃO: Retry com Exponential Backoff
-// ============================================
 /**
- * Realiza requisições com retry automático e exponential backoff
- * Trata erros transitórios: timeout (ETIMEDOUT), 429 (rate limit), 503 (serviço indisponível), 500 (erro interno)
- *
- * @param url - URL para fazer a requisição
- * @param options - Opções do fetch (method, headers, body, etc)
- * @param maxRetries - Número máximo de tentativas (padrão: 3)
- * @returns Response se sucesso, lança erro se falhar em todas as tentativas
- *
- * Exemplo de backoff:
- * - Tentativa 1: falha → aguarda 1s
- * - Tentativa 2: falha → aguarda 2s
- * - Tentativa 3: falha → aguarda 4s
- * - Tentativa 4: falha → lança erro
+ * POST /api/spy-engine
+ * Processa anúncio Facebook e gera variações
  */
-async function fetchWithRetry(
-    url: string,
-    options: RequestInit = {},
-    maxRetries: number = 3
-): Promise<Response> {
-    let lastError: Error | null = null;
+export async function POST(req: Request) {
+  // Generate correlation ID for this request
+  const traceId = crypto.randomUUID();
 
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            console.log(`[Apify Retry] Tentativa ${attempt + 1}/${maxRetries} - URL: ${url.split('?')[0]}`);
+  logger.clear();
+  logger.startTimer('TOTAL_REQUEST');
 
-            // Fazer a requisição com timeout de 30 segundos
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 30000);
+  try {
+    const { adUrl, brandProfile, manualCopy, manualImage, isManualInput } = await req.json();
+    const usingManualInput = isManualInput && manualCopy;
 
-            const response = await fetch(url, {
-                ...options,
-                signal: controller.signal
-            });
+    // Get user for context
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    const userId = user?.id;
 
-            clearTimeout(timeoutId);
+    // Set logger context with traceId and userId
+    logger.setContext(traceId, userId);
 
-            // Se status é 200-299, sucesso!
-            if (response.ok) {
-                console.log(`[Apify Retry] ✅ Sucesso na tentativa ${attempt + 1}`);
-                return response;
-            }
+    logger.info(STAGES.START, 'Requisição recebida', {
+      url: adUrl?.substring(0, 80),
+      usingManualInput,
+      hasBrandProfile: !!brandProfile
+    });
 
-            // Verificar se é erro transitório (429, 503, 500, 502, 504)
-            const retryableStatuses = [429, 500, 502, 503, 504];
-            if (retryableStatuses.includes(response.status)) {
-                const errorText = await response.text();
-                console.warn(
-                    `[Apify Retry] ⚠️ Erro transitório (${response.status}) na tentativa ${attempt + 1}: ${errorText.substring(0, 100)}`
-                );
-
-                // Se não é a última tentativa, aguardar e retentar
-                if (attempt < maxRetries - 1) {
-                    const delayMs = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
-                    console.log(`[Apify Retry] ⏳ Aguardando ${delayMs}ms antes da próxima tentativa...`);
-                    await new Promise(resolve => setTimeout(resolve, delayMs));
-                    continue;
-                } else {
-                    // Última tentativa e falhou
-                    lastError = new Error(
-                        `Apify retornou status ${response.status} após ${maxRetries} tentativas: ${errorText.substring(0, 200)}`
-                    );
-                }
-            } else {
-                // Erro não-transitório (4xx exceto 429, 401, etc) - não retentar
-                const errorText = await response.text();
-                throw new Error(
-                    `Apify API Error: ${response.status} - ${errorText.substring(0, 200)}`
-                );
-            }
-        } catch (error: unknown) {
-            lastError = error as Error;
-
-            // Verificar se é timeout ou erro de conexão (ETIMEDOUT, ECONNRESET, etc)
-            const errorObj = error as { name?: string; code?: string };
-            const isTimeoutError = errorObj.name === 'AbortError' || errorObj.code === 'ETIMEDOUT';
-            const isConnectionError = errorObj.code === 'ECONNREFUSED' || errorObj.code === 'ECONNRESET';
-
-            if ((isTimeoutError || isConnectionError) && attempt < maxRetries - 1) {
-                console.warn(
-                    `[Apify Retry] ⚠️ Erro transitório (${errorObj.name || errorObj.code}) na tentativa ${attempt + 1}`
-                );
-                const delayMs = Math.pow(2, attempt) * 1000;
-                console.log(`[Apify Retry] ⏳ Aguardando ${delayMs}ms antes da próxima tentativa...`);
-                await new Promise(resolve => setTimeout(resolve, delayMs));
-            } else if (attempt === maxRetries - 1) {
-                // Última tentativa falhou
-                console.error(`[Apify Retry] ❌ Falha após ${maxRetries} tentativas:`, error);
-            } else {
-                // Erro que não devemos retentar (ex: erro de parsing JSON)
-                throw error;
-            }
-        }
+    // ========== VALIDAÇÃO ==========
+    if (!adUrl && !usingManualInput) {
+      logger.error(STAGES.VALIDATION, 'URL não fornecida');
+      return NextResponse.json({ error: 'URL do anúncio não fornecida.' }, { status: 400 });
     }
 
-    // Se chegou aqui, todas as tentativas falharam
-    throw lastError || new Error(`Falha após ${maxRetries} tentativas sem resposta do servidor`);
-}
+    if (!process.env.APIFY_API_TOKEN || !process.env.OPENAI_API_KEY) {
+      logger.error(STAGES.VALIDATION, 'Chaves de API ausentes');
+      return NextResponse.json({ error: 'Chaves de API ausentes no servidor.' }, { status: 500 });
+    }
 
-// ============================================
-// FIM: Retry com Exponential Backoff
-// ============================================
+    logger.success(STAGES.VALIDATION, 'Validação OK');
 
-export async function POST(req: Request) {
-    logger.clear();
-    logger.startTimer('TOTAL_REQUEST');
+    // ========== NICHE DETECTION ==========
+    const initialNicheDetection = usingManualInput
+      ? detectNicheWithConfidence('manual://provided', manualCopy)
+      : detectNicheWithConfidence(adUrl);
+    const detectedNiche = initialNicheDetection.niche;
 
-    try {
-        const { adUrl, brandProfile, manualCopy, manualImage, isManualInput } = await req.json();
+    // ========== AUTH + RATE LIMIT ==========
+    let currentPlan = 'gratis';
+    let currentCredits = 5;
 
-        // FEATURE 1: Suporte a entrada manual de copy
-        const usingManualInput = isManualInput && manualCopy;
+    if (user) {
+      logger.info(STAGES.BILLING, 'Usuário autenticado', { userId: user.id });
 
-        logger.info(STAGES.START, 'Requisição recebida', {
-            url: adUrl?.substring(0, 80),
-            hasBrandProfile: !!brandProfile,
-            usingManualInput,
-            manualCopyLength: manualCopy?.length || 0,
-            hasManualImage: !!manualImage
+      // Rate limit check
+      const limit = getLimitForRoute('/api/spy-engine');
+      const rateLimitResult = await checkRateLimit(user.id, '/api/spy-engine', limit);
+
+      if (!rateLimitResult.allowed) {
+        logger.warn(STAGES.BILLING, '⚠️ Rate limit excedido');
+        return NextResponse.json(
+          { error: 'Too Many Requests', message: `Limite de ${limit} req/min atingido` },
+          { status: 429, headers: { 'Retry-After': String(rateLimitResult.retryAfter) } }
+        );
+      }
+
+      // Billing info
+      const billing = await loadUserBilling(supabase, user.id, user.email || '', user.email === process.env.ADMIN_EMAIL);
+      currentPlan = billing.plan;
+      currentCredits = billing.credits;
+
+      if (!billing.canUseService) {
+        logger.error(STAGES.BILLING, '❌ Acesso bloqueado - sem créditos');
+        return NextResponse.json(
+          { error: 'OUT_OF_CREDITS', message: 'Você atingiu o limite de requisições grátis.' },
+          { status: 403 }
+        );
+      }
+    }
+
+    logger.success(STAGES.BILLING, 'Billing OK', { plan: currentPlan, credits: currentCredits });
+
+    // ========== APIFY EXTRACTION ==========
+    logger.info(STAGES.APIFY_CALL, 'Iniciando extração');
+    let originalCopy = '';
+    let adImageUrl = '';
+    let apifyErrorMessage = '';
+
+    if (usingManualInput) {
+      originalCopy = manualCopy.trim();
+      adImageUrl = manualImage || '';
+      logger.success(STAGES.APIFY_SUCCESS, '✅ Dados manuais carregados');
+    } else {
+      const apifyResult = await extractAdWithApify(adUrl, process.env.APIFY_API_TOKEN || '');
+
+      if (apifyResult.isError) {
+        apifyErrorMessage = apifyResult.errorMessage || 'Erro desconhecido';
+        if (user && currentPlan === 'gratis') {
+          await refundOnApifyFailure(user.id, apifyErrorMessage);
+        }
+
+        // Fallback
+        const mockData = getMockAdData(adUrl, detectedNiche);
+        originalCopy = mockData.copy;
+        adImageUrl = mockData.image;
+        logger.warn(STAGES.FALLBACK, '⚠️ Usando mock data');
+      } else {
+        originalCopy = apifyResult.originalCopy;
+        adImageUrl = apifyResult.adImageUrl;
+        logger.success(STAGES.APIFY_SUCCESS, '✅ Extração concluída');
+      }
+    }
+
+    // Fallback se ainda vazio
+    if (!originalCopy || !adImageUrl) {
+      const mockData = getMockAdData(adUrl, detectedNiche);
+      if (!originalCopy) originalCopy = mockData.copy;
+      if (!adImageUrl) adImageUrl = mockData.image;
+    }
+
+    // ========== OPENAI VARIATIONS ==========
+    logger.info(STAGES.OPENAI_CALL, 'Gerando variações');
+    const contextPrompt = getNichePromptContext(detectedNiche);
+    const openaiResult = await generateCopyVariations(
+      openai,
+      originalCopy,
+      detectedNiche,
+      contextPrompt
+    );
+
+    if (openaiResult.isError) {
+      const errorMsg = openaiResult.errorMessage || 'Erro OpenAI';
+      if (user && currentPlan === 'gratis') {
+        await refundOnOpenAIFailure(user.id, errorMsg);
+      }
+    }
+
+    logger.success(STAGES.OPENAI_SUCCESS, '✅ Variações geradas');
+
+    // ========== DALLE IMAGES ==========
+    logger.info(STAGES.DALLE_CALL, 'Gerando imagens');
+    const dalleResult = await generateImagesWithDALLE(
+      openai,
+      detectedNiche,
+      openaiResult.variations.variante1
+    );
+
+    logger.success(STAGES.DALLE_SUCCESS, '✅ Imagens geradas');
+
+    // ========== STORAGE UPLOAD ==========
+    logger.info(STAGES.DALLE_CALL, 'Uploadando imagens');
+    let uploadedImage1 = dalleResult.images.image1;
+    let uploadedImage2 = dalleResult.images.image2;
+    let uploadedImage3 = dalleResult.images.image3;
+
+    if (user) {
+      try {
+        const results = await Promise.all([
+          uploadImageToSupabase(dalleResult.images.image1, supabase, user.id, 1),
+          uploadImageToSupabase(dalleResult.images.image2, supabase, user.id, 2),
+          uploadImageToSupabase(dalleResult.images.image3, supabase, user.id, 3)
+        ]);
+
+        uploadedImage1 = results[0].url;
+        uploadedImage2 = results[1].url;
+        uploadedImage3 = results[2].url;
+        logger.success(STAGES.STORAGE_SUCCESS, '✅ Upload concluído');
+      } catch (uploadError) {
+        logger.warn(STAGES.STORAGE_FAIL, '⚠️ Erro no upload, usando URLs originais');
+      }
+    }
+
+    // ========== DATABASE SAVE ==========
+    if (user) {
+      try {
+        await supabase.from('spybot_generations').insert({
+          user_id: user.id,
+          original_ad_copy: originalCopy,
+          original_ad_image: adImageUrl,
+          variante1: openaiResult.variations.variante1,
+          variante2: openaiResult.variations.variante2,
+          variante3: openaiResult.variations.variante3,
+          image1: uploadedImage1,
+          image2: uploadedImage2,
+          image3: uploadedImage3,
+          niche: detectedNiche,
+          strategic_analysis: openaiResult.strategicAnalysis,
+          created_at: new Date().toISOString()
         });
 
-        if (!adUrl && !usingManualInput) {
-            logger.error(STAGES.VALIDATION, 'URL do anúncio não fornecida e modo manual não ativado');
-            return NextResponse.json({ error: 'URL do anúncio não fornecida.' }, { status: 400 });
+        // Deduzir crédito apenas se sucesso e plano gratis
+        if (currentPlan === 'gratis') {
+          const newCredits = Math.max(0, currentCredits - 1);
+          await supabase
+            .from('spybot_subscriptions')
+            .update({ credits: newCredits })
+            .eq('user_id', user.id);
+          currentCredits = newCredits;
         }
 
-        // 🎯 CRÍTICO: Detectar o nicho
-        // Se usando input manual, detectar do copy. Senão, detectar da URL.
-        // Isso garante que, mesmo se Apify falhar, sabemos qual é o nicho REAL com confiança
-        // ⚠️ IMPORTANTE: Usar 'let' (não 'const') para permitir fallback
-        let initialNicheDetection;
-        let detectedNicheFromUrl;
+        logger.success(STAGES.SUPABASE_SUCCESS, '✅ Dados salvos em DB');
+      } catch (dbError) {
+        logger.warn(STAGES.SUPABASE_FAIL, '⚠️ Erro ao salvar em DB');
+      }
+    }
 
-        if (usingManualInput) {
-            // ENTRADA MANUAL: Detectar nicho do copy fornecido
-            logger.info(STAGES.START, '📝 MODO MANUAL: Detectando nicho da copy fornecida pelo usuário');
-            initialNicheDetection = detectNicheWithConfidence("manual://provided", manualCopy);
-            detectedNicheFromUrl = initialNicheDetection.niche;
-            logger.success(STAGES.START, '✅ Nicho detectado do copy manual', {
-                nicho: detectedNicheFromUrl,
-                confianca: `${initialNicheDetection.confidencePercent}%`,
-                keywords: initialNicheDetection.keywords.slice(0, 3),
-                copyLength: manualCopy.length
-            });
-        } else {
-            // MODO URL: Detectar nicho da URL
-            initialNicheDetection = detectNicheWithConfidence(adUrl);
-            detectedNicheFromUrl = initialNicheDetection.niche;
-            logger.info(STAGES.START, '🎯 Nicho da URL detectado (sistema v2)', {
-                url: adUrl?.substring(0, 80),
-                detectedNiche: detectedNicheFromUrl,
-                confianca: `${initialNicheDetection.confidencePercent}%`,
-                keywords: initialNicheDetection.keywords.slice(0, 3),
-                reason: 'Detectado cedo para garantir imagePrompts corretos quando Apify falha'
-            });
-        }
+    // ========== RESPONSE ==========
+    const generatedImages: GeneratedImages = {
+      image1: {
+        url: uploadedImage1,
+        type: 'generated',
+        isTemporary: false,
+        niche: detectedNiche,
+        source: { provider: detectProvider(uploadedImage1) },
+        metadata: { retryCount: 0, uploadDuration: 0 }
+      },
+      image2: {
+        url: uploadedImage2,
+        type: 'generated',
+        isTemporary: false,
+        niche: detectedNiche,
+        source: { provider: detectProvider(uploadedImage2) },
+        metadata: { retryCount: 0, uploadDuration: 0 }
+      },
+      image3: {
+        url: uploadedImage3,
+        type: 'generated',
+        isTemporary: false,
+        niche: detectedNiche,
+        source: { provider: detectProvider(uploadedImage3) },
+        metadata: { retryCount: 0, uploadDuration: 0 }
+      }
+    };
 
-        if (!process.env.APIFY_API_TOKEN || !process.env.OPENAI_API_KEY) {
-            logger.error(STAGES.VALIDATION, 'Chaves de API ausentes no servidor');
-            return NextResponse.json({ error: 'Chaves de API ausentes no servidor.' }, { status: 500 });
-        }
+    logger.endTimer('TOTAL_REQUEST', STAGES.END);
 
-        logger.success(STAGES.VALIDATION, 'URL e chaves validadas');
+    const responseData = {
+      success: true,
+      traceId, // Include correlation ID for client tracking
+      originalAd: {
+        copy: originalCopy,
+        image: adImageUrl
+      },
+      generatedVariations: {
+        variante1: openaiResult.variations.variante1,
+        variante2: openaiResult.variations.variante2,
+        variante3: openaiResult.variations.variante3
+      },
+      generatedImages,
+      strategicAnalysis: openaiResult.strategicAnalysis,
+      niche: detectedNiche,
+      creditsRemaining: user ? currentCredits : undefined,
+      logs: logger.exportAsJSON()
+    };
 
-        // --- INÍCIO: Verificação de Monetização (Billing) ---
-        logger.info(STAGES.BILLING, 'Iniciando verificação de créditos e plano');
-        const supabase = await createClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        let currentPlan = 'gratis';
-        let currentCredits = 5;
+    return NextResponse.json(responseData);
+  } catch (error: unknown) {
+    logger.error(STAGES.ERROR_CRITICAL, 'Erro crítico', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
-        if (user) {
-            logger.info(STAGES.BILLING, 'Usuário autenticado', { userId: user.id, userEmail: user.email });
-            const { data: sub } = await supabase.from('spybot_subscriptions').select('*').eq('user_id', user.id).single();
-            if (!sub) {
-                logger.info(STAGES.BILLING, 'Primeira requisição do usuário, criando subscription padrão');
-                await supabase.from('spybot_subscriptions').insert({ user_id: user.id, credits: 5, plan: 'gratis' });
-            } else {
-                currentPlan = sub.plan;
-                currentCredits = sub.credits;
-                logger.success(STAGES.BILLING, 'Plano carregado', { plan: currentPlan, credits: currentCredits });
-            }
-
-            const hasByok = brandProfile && brandProfile.openaiKey && brandProfile.openaiKey.trim() !== "";
-
-            // Admin (dono) não tem limitação de créditos
-            const adminEmailFromEnv = process.env.NEXT_PUBLIC_ADMIN_EMAIL?.trim();
-            const userEmail = user?.email?.trim();
-            const isAdmin = userEmail === adminEmailFromEnv;
-
-            logger.info(STAGES.BILLING, '🔍 DEBUG ADMIN CHECK', {
-                userEmail,
-                adminEmailFromEnv,
-                isAdmin,
-                currentPlan,
-                currentCredits,
-                hasByok
-            });
-
-            // Validação: Usuário grátis com créditos zerados DEVE assinar PRO (ADMIN IGNORA ISSO)
-            if (!isAdmin && currentPlan === 'gratis' && currentCredits <= 0 && !hasByok) {
-                logger.error(STAGES.BILLING, '❌ Créditos insuficientes, acesso negado para usuário');
-                return NextResponse.json({
-                    error: 'Seus créditos grátis acabaram! 😢 Você precisa assinar o plano PRO ($97) para continuar usando o Spy Bot. Após o upgrade, você poderá adicionar sua própria Chave da OpenAI se desejar.',
-                    code: 'OUT_OF_CREDITS'
-                }, { status: 403 });
-            }
-
-            if (isAdmin) {
-                logger.success(STAGES.BILLING, '✅ ADMIN DETECTADO - Acesso ilimitado liberado!');
-            }
-        } else {
-            logger.warn(STAGES.BILLING, 'Usuário não autenticado, usando defaults');
-        }
-        logger.success(STAGES.BILLING, 'Verificação de billing concluída');
-        // --- FIM: Verificação de Monetização ---
-
-        // 1. Fase de Extração (Apify - Facebook Ads Library) OU ENTRADA MANUAL
-        let originalCopy = '';
-        let adImageUrl = '';
-        let apifyErrorMessage = "";
-
-        // FEATURE 1: Se entrada manual, pular Apify e usar dados fornecidos
-        if (usingManualInput) {
-            logger.info(STAGES.START, '✅ ENTRADA MANUAL: Usando copy e imagem fornecidos pelo usuário, pulando Apify');
-            originalCopy = manualCopy.trim();
-            adImageUrl = manualImage || '';
-
-            console.log('[MANUAL INPUT] ✅ Usando copy manual fornecido pelo usuário - Apify SKIPPED', {
-                copyLength: originalCopy.length,
-                hasImage: !!adImageUrl,
-                nichoDetectado: detectedNicheFromUrl
-            });
-
-            logger.success(STAGES.APIFY_SUCCESS, '✅ Dados manuais carregados com sucesso', {
-                copyLength: originalCopy.length,
-                hasImage: !!adImageUrl,
-                imageSample: adImageUrl?.substring(0, 60) || 'nenhuma',
-                mensagem: 'Usando dados que você forneceu'
-            });
-        } else {
-            // MODO NORMAL: Usar Apify
-            try {
-            logger.startTimer('APIFY_EXTRACTION');
-
-            // ✅ IMPORTANTE: Fazer trim() para remover espaços em branco
-            // Apify valida rigorosamente URLs e rejeita com espaços
-            const cleanedUrl = adUrl.trim();
-
-            logger.info(STAGES.APIFY_CALL, 'Iniciando extração com Apify (timeout: 60s)', {
-                url: cleanedUrl?.substring(0, 80),
-                hadWhitespace: cleanedUrl !== adUrl,
-                isAdsLibrary: cleanedUrl?.includes('/ads/library/'),
-                reason: 'Timeout 60s para Chrome + proxy FACEBOOK que são lentos com anti-bot'
-            });
-
-            // ✅ Configuração completa do Apify com proxy para melhor taxa de sucesso
-            // Especialmente importante para Ads Library URLs que têm anti-bot mais agressivo
-            const input = {
-                startUrls: [{ url: cleanedUrl }],
-                maxItems: 3,  // Aumentado: 1 → 3 (mais dados aumenta chance de sucesso)
-                // ✅ Adicionar proxy configuration para Facebook (solução da investigação)
-                proxyConfiguration: {
-                    useApifyProxy: true,
-                    apifyProxyGroups: ["FACEBOOK"]  // Usa grupo de proxies específico para Facebook
-                },
-                // ✅ Usar navegador real em vez de apenas HTTP para evitar detecção
-                useChrome: true,
-                // ✅ User-Agent realista para não ser bloqueado
-                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            };
-
-            const apifyToken = process.env.APIFY_API_TOKEN || "dummy";
-
-            // ============================================
-            // TIMEOUT DO APIFY (SMART TIMEOUT)
-            // ============================================
-            // 60 segundos para Apify com Chrome + proxy FACEBOOK
-            // Facebook anti-bot é MUITO agressivo, Chrome precisa de ~30-50s para inicializar
-            // Se falhar em 60s, usa fallback automático com Stock Images
-            const APIFY_TIMEOUT = 60000; // 60s = tempo máximo seguro para Chrome + Facebook anti-bot
-            const controller = new AbortController();
-            const timeoutHandle = setTimeout(() => {
-                controller.abort();
-                logger.warn(STAGES.APIFY_CALL, '⏱️ Timeout Apify (60s) - URL bloqueada ou Apify indisponível, acionando fallback inteligente');
-            }, APIFY_TIMEOUT);
-
-            let response;
-            try {
-                response = await fetch(
-                    `https://api.apify.com/v2/acts/apify~facebook-ads-scraper/run-sync-get-dataset-items?token=${apifyToken}`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(input),
-                        signal: controller.signal
-                    }
-                );
-                clearTimeout(timeoutHandle);
-            } catch (timeoutErr) {
-                clearTimeout(timeoutHandle);
-                // Timeout do abort - ativar fallback
-                apifyErrorMessage = "Apify timeout (60s) - URL bloqueada pelo Facebook ou Apify indisponível";
-                logger.error(STAGES.APIFY_CALL, apifyErrorMessage, {
-                    adUrl: adUrl.substring(0, 100),
-                    isAdsLibrary: adUrl.includes('/ads/library/'),
-                    timeoutError: String(timeoutErr),
-                    reason: 'Timeout após 60s - Facebook anti-bot bloqueou a extração. Stock Images fallback ativado.',
-                    mitigation: 'Sistema usará Stock Images diferentes como fallback - variações ainda são de qualidade'
-                });
-                throw new Error(apifyErrorMessage);
-            }
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Apify API Error: ${response.status} - ${errorText}`);
-            }
-
-            const items = await response.json();
-
-            if (items && items.length > 0) {
-                const adData = items[0];
-
-                // Mapeamento Inteligente: Facebook muda frequentemente a estrutura.
-                const snap = adData.snapshot || adData;
-
-                // Tenta puxar o texto de todos os lugares possíveis
-                const rawCopy = snap.body?.text || adData.primaryText || adData.text || snap.title || snap.caption || snap.linkDescription || '';
-                originalCopy = String(rawCopy).trim();
-
-                // ✅ IMPORTANTE: Detectar template vars do Facebook Ads
-                // Ads Library retorna variáveis como {{product.brand}}, {{discount}}, etc não preenchidas
-                // Se a cópia contiver template vars não preenchidos, considerar como vazia
-                const hasTemplateVars = /\{\{[\s\S]*?\}\}/.test(originalCopy);
-
-                if (originalCopy === 'undefined' ||
-                    originalCopy === 'null' ||
-                    hasTemplateVars) {  // ← Novo: detecta {{var}}
-                    originalCopy = '';
-                    if (hasTemplateVars) {
-                        logger.warn(STAGES.APIFY_SUCCESS, 'Copy contém template vars não preenchidos', {
-                            example: originalCopy.substring(0, 50)
-                        });
-                    }
-                }
-
-                let rawImageUrl = String(
-                    snap.images?.[0]?.originalImageUrl ||
-                    snap.videos?.[0]?.videoPreviewImageUrl ||
-                    snap.pageProfilePictureUrl ||
-                    adData.imageUrl ||
-                    ''
-                );
-
-                // Melhorar qualidade da imagem removendo parâmetros de thumbnail do Facebook
-                // Facebook retorna ?stp=dst-jpg_s60x60_tt6 para thumbnails, substituir por versão maior
-                adImageUrl = rawImageUrl
-                    .replace(/\?stp=dst-jpg_s60x60.*?(&|$)/, '?stp=dst-jpg_s800x800_tt6&')
-                    .replace(/\?stp=.*?&/, '?')
-                    .replace(/\?stp=.*?$/, '');
-
-                logger.endTimer('APIFY_EXTRACTION', STAGES.APIFY_SUCCESS);
-                logger.success(STAGES.APIFY_SUCCESS, 'Dados extraídos com sucesso', {
-                    copyLength: originalCopy.length,
-                    hasImage: !!adImageUrl,
-                    imageSample: adImageUrl?.substring(0, 60)
-                });
-            } else {
-                apifyErrorMessage = "A extração retornou 0 itens (vazio). O Facebook pode ter bloqueado ou o ID é inválido.";
-                logger.warn(STAGES.APIFY_FAIL, 'Apify retornou lista vazia', { reason: apifyErrorMessage });
-            }
-            } catch (scraperError: unknown) {
-                apifyErrorMessage = scraperError instanceof Error ? scraperError.message : String(scraperError);
-                logger.endTimer('APIFY_EXTRACTION', STAGES.APIFY_FAIL);
-                logger.error(STAGES.APIFY_FAIL, 'Erro na chamada Apify', scraperError);
-            }
-        }
-
-        // FALLBACK INTELIGENTE E TRATAMENTO DE AD SEM COPY
-        // IMPORTANTE: Se Apify falhou de ANY forma, usar mock data IMEDIATAMENTE
-        // FEATURE 1: Quando entrada manual, não fazer fallback de Apify - use dados do usuário
-        // FEATURE 2: Se entrada manual SEM imagem, usar imagens do nicho detectado
-        if ((apifyErrorMessage || !originalCopy || !adImageUrl) && !usingManualInput) {
-            if (apifyErrorMessage) {
-                // Apify explicitamente falhou
-                logger.error(STAGES.FALLBACK, `❌ FALLBACK ATIVADO - Apify falhou. Erro: ${apifyErrorMessage.substring(0, 200)}. Usando dados mock.`);
-                console.error(`[APIFY ERROR] ${apifyErrorMessage}`);
-            } else if (!originalCopy || !adImageUrl) {
-                // Apify não preencheu copy ou imagem - também fallback
-                logger.warn(STAGES.FALLBACK, `⚠️  FALLBACK ATIVADO - Apify incompleto (copy: ${!!originalCopy}, image: ${!!adImageUrl}). Usando mock.`);
-            }
-
-            // FEATURE 2: Tentar detectar nicho da URL mesmo quando Apify falha
-            // Isso garante que as imagens geradas correspondam ao nicho correto
-            // ✅ IMPORTANTE: Passar detectedNicheFromUrl para garantir mock data do nicho certo
-            const mockData = getMockAdData(adUrl, detectedNicheFromUrl);
-
-            // Só sobrescreve se estiver vazio
-            if (!originalCopy) originalCopy = mockData.copy;
-            if (!adImageUrl) adImageUrl = mockData.image;
-
-            logger.info(STAGES.FALLBACK, 'Mock data carregado como fallback', {
-                niche: mockData.niche,
-                url: adUrl,
-                isMock: mockData.isMock,
-                isAdsLibraryUrl: adUrl.includes('/ads/library/'),
-                apifyError: apifyErrorMessage?.substring(0, 100) || 'incompleto',
-                finalCopyLength: originalCopy.length,
-                finalImageLength: adImageUrl.length
-            });
-        } else if (usingManualInput && !adImageUrl) {
-            // FEATURE 1: Se entrada manual SEM imagem, usar imagens do nicho detectado
-            logger.info(STAGES.FALLBACK, '🎨 ENTRADA MANUAL: Nenhuma imagem fornecida, usando imagens do nicho detectado');
-            const mockData = getMockAdData("manual://provided", detectedNicheFromUrl);
-            adImageUrl = mockData.image;
-            logger.success(STAGES.FALLBACK, '✅ Imagem de fallback carregada do nicho', {
-                nicho: detectedNicheFromUrl,
-                imageUrl: adImageUrl.substring(0, 80)
-            });
-        } else if (!originalCopy && !apifyErrorMessage) {
-            // Extraiu com sucesso, mas o anúncio é puramente em Imagem/Vídeo (Não tem script de vendas)
-            logger.warn(STAGES.APIFY_SUCCESS, 'Anúncio extraído mas sem copy escrita (100% visual)');
-            originalCopy = "[O anunciante original não utilizou copy escrita para este anúncio, o foco foi 100% no Apelo Visual ou Vídeo (Aja baseado nisso para gerar suas próprias copies matadoras!).]";
-        } else if (originalCopy && !apifyErrorMessage) {
-            logger.success(STAGES.APIFY_SUCCESS, '✅ Dados extraídos com sucesso via Apify!', {
-                copyLength: originalCopy.length,
-                hasImage: !!adImageUrl,
-                adUrl: adUrl.substring(0, 80)
-            });
-        }
-
-        // GARANTIR QUE SEMPRE TEMOS IMAGEM E COPY VÁLIDOS
-        if (!originalCopy) {
-            originalCopy = "[Imagem do anúncio original - foco 100% visual]";
-        }
-        if (!adImageUrl) {
-            adImageUrl = "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&q=80&w=800";
-        }
-
-        // ============================================
-        // 🎯 FALLBACK CRÍTICO: Detectar nicho pela COPY se URL não detectou (v2)
-        // FEATURE 2: Para entrada manual, SEMPRE refinar pela copy
-        // ============================================
-        // Se URL retornou "geral" ou low confidence, tentar detectar pelo conteúdo do anúncio
-        // Se entrada manual, sempre refinar a detecção pela copy que o usuário forneceu
-        const shouldRefineNiche = (detectedNicheFromUrl === 'geral' || initialNicheDetection.confidence < 0.5) || usingManualInput;
-
-        if (shouldRefineNiche && originalCopy && originalCopy.length > 20) {
-            const refineUrl = usingManualInput ? "manual://provided" : adUrl;
-            const copyNicheDetection = detectNicheWithConfidence(refineUrl, originalCopy);
-            if (copyNicheDetection.niche !== 'geral' && copyNicheDetection.confidence > initialNicheDetection.confidence) {
-                logger.success(STAGES.START, '✅ Nicho refinado pela COPY (confidence melhorou)', {
-                    urlDetected: initialNicheDetection.niche,
-                    urlConfidence: `${initialNicheDetection.confidencePercent}%`,
-                    copyDetected: copyNicheDetection.niche,
-                    copyConfidence: `${copyNicheDetection.confidencePercent}%`,
-                    keywords: copyNicheDetection.keywords.slice(0, 3),
-                    reason: usingManualInput ? 'Entrada manual: análise pela copy fornecida' : 'Análise completa (URL+COPY) retornou nicho melhor'
-                });
-                detectedNicheFromUrl = copyNicheDetection.niche;
-                initialNicheDetection.confidence = copyNicheDetection.confidence;
-                initialNicheDetection.keywords = copyNicheDetection.keywords;
-            }
-        } else if (detectedNicheFromUrl !== 'geral') {
-            logger.info(STAGES.START, '✅ Nicho já detectado com confiança', {
-                nicho: detectedNicheFromUrl,
-                confianca: `${initialNicheDetection.confidencePercent}%`,
-                fonte: usingManualInput ? 'Copy manual do usuário' : 'URL'
-            });
-        }
-
-        // Verificação se estamos rodando sem chave real na produção para pular a chamada e não quebrar com 500
-        // ✅ DESENVOLVIMENTO: Forçar modo DEMO para testar variações
-        const FORCE_DEMO_MODE = false; // ❌ Desativado - usando DALL-E real agora!
-        if (FORCE_DEMO_MODE || !process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "dummy_key_for_build") {
-            logger.warn(STAGES.OPENAI_CALL, 'Chave OpenAI ausente ou dummy, usando resposta de demo');
-            return NextResponse.json({
-                success: true,
-                originalAd: {
-                    copy: originalCopy,
-                    image: adImageUrl
-                },
-                generatedVariations: {
-                    variante1: "(DEMO) O mercado de estética está virado de cabeça para baixo. Suas concorrentes que cobram metade do seu preço estão lotando a agenda enquanto você sua a camisa. Pare de brigar por centavos e implemente o Protocolo Diamante.",
-                    variante2: "(DEMO) Lotar sua clínica nunca foi tão fácil. Com o Protocolo Diamante, você atrai clientes de alto padrão dispostas a pagar o triplo pelo seu serviço. Tudo isso sem depender de dancinhas no Instagram.",
-                    variante3: "(DEMO) Ana estava quase fechando a clínica. Ela não aguentava mais clientes pedendo desconto. Até que ela descobriu um padrão de vendas secreto. Dois meses depois, ela precisou contratar 3 assistentes."
-                },
-                generatedImages: {
-                    image1: "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&q=80&w=800",
-                    image2: "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&q=80&w=800",
-                    image3: "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&q=80&w=800"
-                },
-                logs: logger.exportAsJSON()
-            });
-        }
-        // 2. Fase de IA (Reengenharia de Copywriting e Design)
-        try {
-            logger.startTimer('OPENAI_CALL');
-            logger.info(STAGES.OPENAI_CALL, 'Iniciando chamada GPT-4o para reengenharia de copy');
-
-            // BYOK - Bring Your Own Key
-            let activeOpenaiClient = openai;
-            let usingByok = false;
-            if (brandProfile && brandProfile.openaiKey && brandProfile.openaiKey.trim() !== "") {
-                logger.info(STAGES.OPENAI_CALL, 'Usando chave API customizada do cliente (BYOK)');
-                activeOpenaiClient = new OpenAI({ apiKey: brandProfile.openaiKey.trim() });
-                usingByok = true;
-            }
-
-            // Montagem Dinâmica do Contexto da Marca
-            let brandContext = "";
-            if (brandProfile && (brandProfile.companyName || brandProfile.niche)) {
-                logger.info(STAGES.OPENAI_CALL, 'Contexto de marca detectado', { brand: brandProfile.companyName, niche: brandProfile.niche });
-                brandContext = `
-    🚨 IDENTIDADE DA MARCA APLICADA (OBRIGATÓRIO):
-    O usuário configurou um perfil da sua própria empresa para você adaptar a copy:
-    - Nome da Empresa / Produto: ${brandProfile.companyName || 'Não especificado'}
-    - Nicho de Atuação: ${brandProfile.niche || 'Não especificado'}
-    - Público-Alvo Ideal: ${brandProfile.targetAudience || 'Não especificado'}
-    - Tom de Voz Obrigatório: ${brandProfile.toneOfVoice || 'Não especificado'}
-
-    INSTRUÇÕES: Substitua o nome da empresa ou produto do anúncio original PELO NOME DA EMPRESA e nicho indicados acima. O texto DEVE estar escrito no 'Tom de Voz Obrigatório' da marca do cliente!
-    `;
-            }
-
-            // 🎯 INTEGRAR CONTEXTO DO NICHO NO SYSTEM PROMPT (v2)
-            const nicheContextInstructions = getNichePromptContext(detectedNicheFromUrl);
-            const enhancedSystemPrompt = `Você é um especialista em clonagem estratégica de anúncios para Meta Ads.
-${brandContext}
-
-🎯 NICHO DETECTADO DA URL: ${detectedNicheFromUrl.toUpperCase()} (Confiança: ${initialNicheDetection.confidencePercent}%)
-⚠️ INSTRUÇÃO CRÍTICA: Use o nicho acima — não tente adivinhar pela copy.
-📊 Keywords detectados: ${initialNicheDetection.keywords.slice(0, 5).join(', ')}
-
-${nicheContextInstructions}`;
-
-            const chatCompletion = await activeOpenaiClient.chat.completions.create({
-                model: "gpt-4o",
-                messages: [
-                    {
-                        role: "system",
-                        content: enhancedSystemPrompt + `
-
-- variante2: Foco na SOLUÇÃO DIRETA — benefícios claros, linguagem assertiva
-- variante3: Foco em AUTORIDADE E PROVA — depoimento ou dado de resultado
-
-⚠️ FORMATO JSON OBRIGATÓRIO:
-Você DEVE responder com EXATAMENTE este JSON:
-{
-  "variante1": "copy para variante 1 (foco na DOR)",
-  "variante2": "copy para variante 2 (foco na SOLUÇÃO)",
-  "variante3": "copy para variante 3 (foco na AUTORIDADE)",
-  "imagePrompt1": "IMAGEM 1: Focado em EMOÇÃO NEGATIVA/DOR. Estilo visual: fotografia em tons quentes, rosto expressando dor/frustração/preocupação, lighting dramático",
-  "imagePrompt2": "IMAGEM 2: Focado em SOLUÇÃO/ESPERANÇA. Estilo visual: fotografia luminosa, rosto feliz/aliviado, luz natural e cores vibrantes, ambiente limpo",
-  "imagePrompt3": "IMAGEM 3: Focado em AUTORIDADE/PROVA. Estilo visual: fotografia profissional estilo lifestyle, produto/serviço visível, ambiente premium, light setup profissional",
-  "detectedNiche": "${detectedNicheFromUrl}",
-  "strategic_analysis": {
-    "hook": "frase inicial que chama atenção",
-    "promise": "benefício principal prometido",
-    "emotion": "emoção alvo (ex: frustração+esperança)",
-    "cta": "chamada para ação final",
-    "persuasion_structure": "estrutura de persuasão (PAS, AIDA, etc)",
-    "angle": "ângulo de venda único",
-    "offer_type": "tipo de oferta (lead magnet, venda, etc)"
+    return NextResponse.json(
+      { error: errorMessage, logs: logger.exportAsJSON() },
+      { status: 500 }
+    );
   }
 }
 
-⚠️ CRÍTICO PARA IMAGENS:
-- imagePrompt1 DEVE ser completamente diferente de imagePrompt2 e imagePrompt3
-- Cada prompt DEVE mencionar a emoção/contexto diferente (DOR vs SOLUÇÃO vs PROVA)
-- Use ESTILOS VISUAIS diferentes em cada prompt (fotografia estilo X vs fotografia estilo Y)
-- NUNCA repita o mesmo prompt para múltiplas imagens
-- Os 3 prompts DEVEM gerar imagens visualmente DIFERENTES quando enviadas ao DALL-E`
-                    },
-                    {
-                        role: "user",
-                        content: `Nicho para este anúncio: ${detectedNicheFromUrl}
-
-Copy Original para Clonar e Melhorar:\n\n${originalCopy}`
-                    }
-                ],
-                response_format: { type: "json_object" }
-            });
-
-            logger.endTimer('OPENAI_CALL', STAGES.OPENAI_SUCCESS);
-            logger.success(STAGES.OPENAI_SUCCESS, 'GPT-4o respondeu com 3 variações', { usingByok });
-
-            const generatedCopys = JSON.parse(chatCompletion.choices[0].message.content || "{}");
-
-            // 🎯 CRÍTICO: FORÇAR detectedNiche para o valor correto da URL
-            // Isso garante que as imagens SEMPRE correspondem ao nicho correto mesmo se GPT-4o tentar adivinhar errado
-            generatedCopys.detectedNiche = detectedNicheFromUrl;
-            logger.info(STAGES.DALLE_CALL, '🔒 FORÇANDO detectedNiche para o valor correto da URL', {
-                forcedNiche: detectedNicheFromUrl,
-                reason: 'Garante que imagePrompts e fallback images correspondem ao nicho REAL'
-            });
-
-            // ============================================
-            // GERAÇÃO FORÇADA DE IMAGEPROMPTS DIFERENTES
-            // ============================================
-            // Se GPT-4o não gerou prompts diferentes (todos os 3 iguais),
-            // criar prompts COMPLETAMENTE DIFERENTES para cada variante
-            const generateDifferentImagePrompts = (niche: string, varianteCopy: string): { prompt1: string; prompt2: string; prompt3: string } => {
-                const nicheUpper = niche.toUpperCase();
-
-                // Mapa de prompts por nicho - CADA UM COMPLETAMENTE DIFERENTE
-                const nichePrompts: Record<string, { prompt1: string; prompt2: string; prompt3: string }> = {
-                    'EMAGRECIMENTO': {
-                        prompt1: 'close-up of frustrated overweight woman looking at scale with disappointment, belly visible, negative emotions, struggling with weight, sad expression, natural lighting, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt2: 'fit woman flexing muscles confidently in gym, showing toned abs and arms, smiling at camera, transformation success, athletic wear, victory pose, bright professional lighting, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt3: 'nutritionist or fitness coach presenting transformation results to client, professional clinical setting, credentials visible on wall, authority figure with white coat, client reviewing progress charts, clean studio, trustworthy atmosphere, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements'
-                    },
-                    'RENDA_EXTRA': {
-                        prompt1: 'stressed person at desk surrounded by bills and debt notices, worried face, financial struggle, empty wallet, dark mood, feeling trapped, desperate expression, home office, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt2: 'successful entrepreneur celebrating with money, earning notifications on phone, stacks of cash, bright smile, wealth accumulation, luxury background, happiness, success story, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt3: 'professional entrepreneur showing income dashboard results on laptop screen, home office setup, income proof screenshots visible, successful business owner in confident pose, testimonial-style composition, credible and realistic, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements'
-                    },
-                    'ESTETICA': {
-                        prompt1: 'sad woman looking at wrinkles in mirror, aging concerns, dull skin, frustration with appearance, close-up of problem areas, negative self-image, concerned expression, harsh lighting, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt2: 'radiant woman with glowing skin and clear complexion, professional beauty treatment results, confident smile, smooth skin close-up, luxury skincare, beauty success, studio lighting, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt3: 'dermatologist or licensed esthetician in clinical setting showing skin improvement to satisfied client, before-after photo visible, professional credentials displayed, clinical authority, white uniform, clean clinic background, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements'
-                    },
-                    'IGAMING': {
-                        prompt1: 'frustrated gambler losing money, casino losses, stressed face, empty account, debt from betting, disappointed expression, dark casino background, financial trouble from gambling, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt2: 'happy player celebrating big casino win, winning moment with jackpot notification, celebrating with chips and money, joyful expression, fortune moment, lucky win, bright celebration, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt3: 'verified winner holding payout proof screenshot on phone, authentic celebration, credible home setting, real income notification visible on screen, trustworthy face expression, natural lighting, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements'
-                    },
-                    'ECOMMERCE': {
-                        prompt1: 'person frustrated trying to shop, product unavailable, poor selection, looking disappointed, empty shelves concept, limited options, frustrated expression, wanting to buy but nothing good, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt2: 'excited customer holding premium products, enjoying purchase, happy unboxing moment, quality products showcase, customer delight, premium shopping experience, joyful smile, success of purchase, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt3: 'satisfied customer reviewing premium product with 5-star rating on phone, unboxing testimonial style, authentic home environment, product clearly visible, genuine happy expression, real review aesthetic, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements'
-                    },
-                    'ALIMENTACAO': {
-                        prompt1: 'person looking at empty fridge or sad meal, hungry but no good food options, disappointed expression, poor nutrition, craving good food but nothing appetizing, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt2: 'delicious gourmet meal beautifully plated, person enjoying delicious food, happy eating experience, appetizing dishes, satisfied smile, premium culinary experience, mouth-watering food, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt3: 'professional chef or nutritionist presenting signature dish with credentials, michelin-style presentation, authority figure, clean kitchen or studio setting, expertise conveyed naturally, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements'
-                    },
-                    'GERAL': {
-                        prompt1: 'person looking sad and unmotivated, struggling with something, difficult moment, facing challenges, discouraged expression, dark atmosphere, personal struggle, uncertainty visible, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt2: 'person celebrating success and happiness, achieving goal, confident pose, smiling brightly, accomplished moment, positive energy, winning feeling, bright atmosphere, victory expression, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements',
-                        prompt3: 'professional expert or authority figure presenting verifiable results to client, office or studio setting, credibility markers visible, genuine consultation atmosphere, trustworthy body language, vertical 4:5 aspect ratio, clean minimal composition, mobile-first layout, safe zone margins on all edges, professional Meta Ads quality, no text overlays, no clickbait elements'
-                    }
-                };
-
-                const prompts = nichePrompts[nicheUpper] || nichePrompts['GERAL'];
-
-                logger.info(STAGES.DALLE_CALL, 'Usando prompts FORÇADAMENTE DIFERENTES por variante', {
-                    niche: nicheUpper,
-                    prompt1Length: prompts.prompt1.length,
-                    prompt2Length: prompts.prompt2.length,
-                    prompt3Length: prompts.prompt3.length,
-                    reason: 'Garante que DALL-E gera 3 imagens visualmente distintas'
-                });
-
-                return prompts;
-            };
-
-            // SOBRESCREVER os imagePrompts do GPT-4o com versões FORÇADAMENTE DIFERENTES
-            const forcedPrompts = generateDifferentImagePrompts(detectedNicheFromUrl, generatedCopys.variante1 || '');
-            generatedCopys.imagePrompt1 = forcedPrompts.prompt1;
-            generatedCopys.imagePrompt2 = forcedPrompts.prompt2;
-            generatedCopys.imagePrompt3 = forcedPrompts.prompt3;
-
-            logger.success(STAGES.DALLE_CALL, 'ImagePrompts FORÇADOS para serem visualmente diferentes', {
-                imagePrompt1: generatedCopys.imagePrompt1.substring(0, 60) + '...',
-                imagePrompt2: generatedCopys.imagePrompt2.substring(0, 60) + '...',
-                imagePrompt3: generatedCopys.imagePrompt3.substring(0, 60) + '...'
-            });
-
-            // 3. Fase de Geração Visual (DALL-E 3 Nativo FaceAds)
-            logger.startTimer('DALLE_GENERATION');
-            logger.info(STAGES.DALLE_CALL, 'Iniciando geração de 3 imagens (3x Meta Ads 4:5 composition)');
-
-            // Debug: Log dos prompts gerados para DALL-E
-            logger.info(STAGES.DALLE_CALL, 'ImagePrompts recebidos do GPT-4o:', {
-                detectedNiche: generatedCopys.detectedNiche,
-                imagePrompt1: generatedCopys.imagePrompt1?.substring(0, 100),
-                imagePrompt2: generatedCopys.imagePrompt2?.substring(0, 100),
-                imagePrompt3: generatedCopys.imagePrompt3?.substring(0, 100),
-            });
-
-            // IMPORTANTE: Se DALL-E falhar, usa imagens do mockAdData que correspondem ao nicho detectado
-            const nicheForFallback = generatedCopys.detectedNiche || 'geral';
-            const nicheImages = getMockAdData(undefined, nicheForFallback);
-            logger.info(STAGES.DALLE_CALL, `✅ Niche detectado: "${nicheForFallback}" - Fallback configurado`, {
-                fallbackImage: nicheImages.image?.substring(0, 80),
-                nicheData: nicheImages.niche,
-                fallbackReason: 'Usando imagens relacionadas ao nicho detectado'
-            });
-
-            // ✅ IMPORTANTE: Definir NICHE_DATABASE PRIMEIRO (antes de usar)
-            const NICHE_DATABASE: Record<string, { images: string[] }> = {
-                "emagrecimento": {
-                    images: [
-                        "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?auto=format&fit=crop&q=80&w=800", // Dor: mulher frustrada na balança
-                        "https://images.unsplash.com/photo-1434628287857-20284db019fc?auto=format&fit=crop&q=80&w=800", // Solução: mulher fit/confiante
-                        "https://images.unsplash.com/photo-1476480862245-c2951f1d2e2f?auto=format&fit=crop&q=80&w=800"  // Autoridade: treino/resultado
-                    ]
-                },
-                "renda_extra": {
-                    images: [
-                        "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&q=80&w=800", // Dor: pessoa com dificuldade
-                        "https://images.unsplash.com/photo-1559027615-cd4628902d4a?auto=format&fit=crop&q=80&w=800", // Solução: sucessso/negócio
-                        "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=800"  // Autoridade: gráficos/dados
-                    ]
-                },
-                "igaming": {
-                    images: [
-                        "https://images.unsplash.com/photo-1553532173-98eeb64c6a62?auto=format&fit=crop&q=80&w=800", // Dor: pessoa frustrada
-                        "https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?auto=format&fit=crop&q=80&w=800", // Solução: vitória/celebração
-                        "https://images.unsplash.com/photo-1511379938547-c1f69b13d835?auto=format&fit=crop&q=80&w=800"  // Autoridade: comprovação
-                    ]
-                },
-                "estetica": {
-                    images: [
-                        "https://images.unsplash.com/photo-1570172176411-b80fcadc6fb0?auto=format&fit=crop&q=80&w=800", // Dor: rugas/pele envelhecida
-                        "https://images.unsplash.com/photo-1596755094514-ff4df1ecfb7e?auto=format&fit=crop&q=80&w=800", // Solução: pele radiante
-                        "https://images.unsplash.com/photo-1556912988-2b80c6c8b0a1?auto=format&fit=crop&q=80&w=800"     // Autoridade: procedimento profissional
-                    ]
-                },
-                "ecommerce": {
-                    images: [
-                        "https://images.unsplash.com/photo-1441986300974-11335f63f7ee?auto=format&fit=crop&q=80&w=800", // Dor: loja vazia/sem escolha
-                        "https://images.unsplash.com/photo-1555694702871-5572146ce3f3?auto=format&fit=crop&q=80&w=800", // Solução: produtos atraentes
-                        "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&q=80&w=800"   // Autoridade: review/satisfação
-                    ]
-                },
-                "alimentacao": {
-                    images: [
-                        "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800", // Dor: comida ruim/sem apetite
-                        "https://images.unsplash.com/photo-1559027615-cd4628902d4a?auto=format&fit=crop&q=80&w=800", // Solução: prato delicioso
-                        "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&q=80&w=800"  // Autoridade: chef profissional
-                    ]
-                },
-                "geral": {
-                    images: [
-                        "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=800", // Dor: pessoa em dificuldade
-                        "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&q=80&w=800", // Solução: pessoa alegre/vitória
-                        "https://images.unsplash.com/photo-1552581234-26160f608093?auto=format&fit=crop&q=80&w=800"  // Autoridade: especialista/credibilidade
-                    ]
-                }
-            };
-
-            // ✅ SE DALL-E FALHAR, TEMOS 3 IMAGENS DIFERENTES DO MESMO NICHO COMO FALLBACK
-            // IMPORTANTE: Usar 3 imagens diferentes (não repetidas!) para as 3 variações
-            // Buscar todas as imagens do nicho detectado
-            const placeholderFallback = nicheImages?.image || 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=800';
-
-            const getNicheImagesForFallback = (niche: string): string[] => {
-                const nicheData = NICHE_DATABASE[niche] || NICHE_DATABASE['geral'];
-                return nicheData?.images || [placeholderFallback];
-            };
-
-            const nicheImageList = getNicheImagesForFallback(nicheForFallback);
-            const fallbackImages = nicheImageList.length >= 3
-                ? nicheImageList.slice(0, 3)  // 3 imagens diferentes do nicho
-                : [placeholderFallback, placeholderFallback, placeholderFallback];  // Fallback genérico se insuficiente
-
-            logger.info(STAGES.DALLE_CALL, `✅ Fallback preparado com ${fallbackImages.length} imagens diferentes do nicho "${nicheForFallback}"`);
-
-            const generateImageSafely = async (
-                prompt: string,
-                fallbackUrl: string,
-                targetSize: "1024x1024" | "1024x1792",
-                imageNumber: number
-            ) => {
-                try {
-                    if (!prompt) {
-                        console.log(`[DALL-E] ⚠️ Imagem ${imageNumber}: prompt VAZIO, retornando fallback`);
-                        return fallbackImages[imageNumber - 1] || fallbackUrl;
-                    }
-
-                    const isVertical = targetSize === "1024x1792";
-                    console.log(`[DALL-E] 🔄 Imagem ${imageNumber}: Tentando gerar (${isVertical ? 'VERTICAL' : 'QUADRADO'})...`);
-                    logger.info(STAGES.DALLE_CALL, `Gerando imagem ${imageNumber} (${targetSize})`, { promptLength: prompt.length, niche: nicheForFallback, isVertical });
-
-                    // Timeout expandido para imagens verticais (podem demorar mais)
-                    const timeoutMs = isVertical ? 60000 : 45000; // 60s para vertical, 45s para quadrado
-                    const controller = new AbortController();
-                    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
-
-                    try {
-                        const response = await activeOpenaiClient.images.generate({
-                            model: "dall-e-3",
-                            prompt: prompt,
-                            n: 1,
-                            size: targetSize,
-                        });
-                        clearTimeout(timeoutHandle);
-
-                        console.log(`[DALL-E] Response ${imageNumber}:`, {
-                            hasData: !!response.data,
-                            hasUrl: !!response.data?.[0]?.url,
-                            url: response.data?.[0]?.url?.substring(0, 80),
-                        });
-
-                        const generatedUrl = response.data?.[0]?.url || fallbackImages[imageNumber - 1] || fallbackUrl;
-                        if (response.data?.[0]?.url) {
-                            console.log(`[DALL-E] ✅ Imagem ${imageNumber} gerada com sucesso!`);
-                            logger.success(STAGES.DALLE_SUCCESS, `✅ Imagem ${imageNumber} gerada com sucesso (DALL-E)`);
-                        } else {
-                            console.log(`[DALL-E] ⚠️ Imagem ${imageNumber}: Sem URL, usando fallback`);
-                            logger.warn(STAGES.DALLE_FAIL, `⚠️ Imagem ${imageNumber}: DALL-E não retornou URL, usando fallback do nicho`);
-                        }
-                        return generatedUrl;
-                    } catch (timeoutErr) {
-                        clearTimeout(timeoutHandle);
-                        throw timeoutErr;
-                    }
-                } catch (imgErr: unknown) {
-                    console.log(`[DALL-E] ❌ Erro ao gerar imagem ${imageNumber}:`, imgErr);
-                    logger.error(STAGES.DALLE_FAIL, `❌ Erro ao gerar imagem ${imageNumber} (${(imgErr as any)?.message || 'Desconhecido'})`, imgErr);
-                    logger.warn(STAGES.DALLE_FAIL, `⚠️ Imagem ${imageNumber}: Usando fallback do nicho automaticamente`);
-                    return fallbackImages[imageNumber - 1] || fallbackUrl;
-                }
-            };
-
-            // Placeholder: usar imagem do nicho detectado (já definido como placeholderFallback acima)
-            const placeholder = placeholderFallback;
-
-            console.log('[SPY-ENGINE] 🚀 INICIANDO GERAÇÃO DE IMAGENS DALL-E...');
-            console.log('[SPY-ENGINE] Prompts recebidos:', {
-                prompt1: generatedCopys.imagePrompt1?.substring(0, 60),
-                prompt2: generatedCopys.imagePrompt2?.substring(0, 60),
-                prompt3: generatedCopys.imagePrompt3?.substring(0, 60),
-            });
-
-            let [img1, img2, img3] = await Promise.all([
-                generateImageSafely(generatedCopys.imagePrompt1, placeholder, "1024x1024", 1), // Quadrado (Feed Insta/Face)
-                generateImageSafely(generatedCopys.imagePrompt2, placeholder, "1024x1024", 2), // Quadrado (Feed Insta/Face)
-                generateImageSafely(generatedCopys.imagePrompt3, placeholder, "1024x1792", 3)  // Vertical (Stories/Reels/TikTok)
-            ]);
-
-            // ============================================
-            // VERIFICAÇÃO CRÍTICA: Deduplicação de Imagens
-            // ============================================
-            // Se DALL-E retornar URLs iguais, regenerar com sufixos de estilo MUITO DIFERENTES
-            if ((img1 === img2) || (img2 === img3) || (img1 === img3)) {
-                console.log('[SPY-ENGINE] ⚠️ IMAGENS DUPLICADAS DETECTADAS! Tentando regenerar com estilos FORÇADOS...');
-                logger.warn(STAGES.DALLE_CALL, '⚠️ Imagens duplicadas detectadas, regenerando com prompts MUITO modificados');
-
-                try {
-                    // SUPER-REFORÇO: Adicionar instruções MUITO diferentes para cada imagem
-                    const superPrompt1 = generatedCopys.imagePrompt1 + ", fotografia realista, rosto feminino expressando emoção forte, tons quentes laranja/vermelho, lighting profissional, close-up, 85mm lens, professional photography";
-                    const superPrompt2 = generatedCopys.imagePrompt2 + ", fotografia lifestyle moderna, pessoa sorrindo, ambiente aconchegante, cores pastel suaves, luz natural janela, ampla, 35mm, estilo editorial";
-                    const superPrompt3 = generatedCopys.imagePrompt3 + ", ilustração artística abstrata, composição criativa, cores vibrantes contrastantes, elementos geométricos, estilo design moderno, digital art";
-
-                    [img1, img2, img3] = await Promise.all([
-                        generateImageSafely(superPrompt1, placeholder, "1024x1024", 1),
-                        generateImageSafely(superPrompt2, placeholder, "1024x1024", 2),
-                        generateImageSafely(superPrompt3, placeholder, "1024x1792", 3)
-                    ]);
-                    console.log('[SPY-ENGINE] ✅ Imagens regeneradas com sucesso com SUPER-ESTILOS!');
-                    logger.success(STAGES.DALLE_CALL, '✅ Imagens regeneradas com super-estilos diferentes - garantia de diferença');
-                } catch (regenerateErr) {
-                    console.error('[SPY-ENGINE] Erro ao regenerar imagens:', regenerateErr);
-                    logger.error(STAGES.DALLE_FAIL, 'Falha ao regenerar imagens duplicadas');
-                    // Continuar com as imagens originais se a regeneração falhar
-                }
-
-                // FALLBACK: Se ainda houver duplicatas após regeneração, usar Stock Images
-                if ((img1 === img2) || (img2 === img3) || (img1 === img3)) {
-                    console.log('[SPY-ENGINE] ⚠️ AINDA HAY DUPLICATAS! Ativando Stock Images Fallback...');
-                    logger.warn(STAGES.DALLE_CALL, '⚠️ Stock Images fallback ativado para resolver duplicatas');
-
-                    try {
-                        const stockImages = await getStockImageVariations(nicheForFallback, 3);
-                        if (stockImages && stockImages.length >= 3) {
-                            img1 = stockImages[0].url;
-                            img2 = stockImages[1].url;
-                            img3 = stockImages[2].url;
-                            console.log('[SPY-ENGINE] ✅ Stock Images aplicadas com sucesso! 3 imagens diferentes garantidas.');
-                            logger.success(STAGES.DALLE_CALL, '✅ Stock Images fallback: 3 imagens diferentes obtidas com sucesso');
-                        }
-                    } catch (stockImgErr) {
-                        console.error('[SPY-ENGINE] Erro ao buscar Stock Images:', stockImgErr);
-                        logger.error(STAGES.DALLE_FAIL, 'Falha ao buscar Stock Images fallback');
-                        // Continuar com as imagens originais/regeneradas
-                    }
-                }
-            }
-
-            console.log('[SPY-ENGINE] ✅ IMAGENS GERADAS:', {
-                img1: img1?.substring(0, 80),
-                img2: img2?.substring(0, 80),
-                img3: img3?.substring(0, 80),
-                areDifferent: img1 !== img2 && img2 !== img3 && img1 !== img3 ? 'SIM' : 'VERIFICAR'
-            });
-
-            logger.endTimer('DALLE_GENERATION', STAGES.DALLE_SUCCESS);
-
-            let finalImg1 = img1, finalImg2 = img2, finalImg3 = img3;
-
-            // GARANTIR QUE IMAGENS NUNCA ESTEJAM VAZIAS ANTES DO UPLOAD
-            // Se DALL-E falhou ou as URLs estão vazias, usar fallback do nicho
-            // 🎯 CRÍTICO: Usar fallbackImages[0], [1], [2] para ter 3 imagens DIFERENTES do nicho
-            if (!finalImg1 || !finalImg1.trim()) {
-                logger.warn(STAGES.DALLE_FAIL, 'Imagem 1 vazia, usando fallback do nicho');
-                finalImg1 = fallbackImages[0];
-            }
-            if (!finalImg2 || !finalImg2.trim()) {
-                logger.warn(STAGES.DALLE_FAIL, 'Imagem 2 vazia, usando fallback do nicho');
-                finalImg2 = fallbackImages[1];
-            }
-            if (!finalImg3 || !finalImg3.trim()) {
-                logger.warn(STAGES.DALLE_FAIL, 'Imagem 3 vazia, usando fallback do nicho');
-                finalImg3 = fallbackImages[2];
-            }
-
-            // [Histórico e Armazenamento] Tenta salvar os resultados no banco oficial e fotos no Storage
-            try {
-                if (user) {
-                    logger.info(STAGES.STORAGE_UPLOAD, 'Iniciando upload de 3 imagens para Supabase Storage');
-
-                    const uploadImageToSupabase = async (
-                        url: string,
-                        supabaseClient: any,
-                        userId: string,
-                        imageNumber: number,
-                        fallbackImagesArray: string[]
-                    ): Promise<string> => {
-                        // Placeholder permanente para quando falhar (NUNCA expira)
-                        // IMPORTANTE: Usa imagem DIFERENTE do nicho detectado para cada variante!
-                        const placeholderUrl = fallbackImagesArray[imageNumber - 1] || fallbackImagesArray[0];
-
-                        if (!url) {
-                            logger.warn(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] URL vazia, usando imagem do nicho: ${nicheForFallback}`);
-                            return placeholderUrl;
-                        }
-
-                        if (url.includes("unsplash")) {
-                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] usando URL externa (unsplash)`);
-                            return url; // Unsplash URLs são permanentes, OK
-                        }
-
-                        try {
-                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Iniciando upload`, { urlDomain: url.split('/')[2] });
-
-                            // Log de tentativa de upload com userId
-                            logger.info('UPLOAD_ATTEMPT', 'Tentando upload para Supabase Storage', {
-                                imageNumber,
-                                userId: userId || 'anonymous',
-                                bucket: 'spybot_images'
-                            });
-
-                            // Usar AbortController para timeout correto no fetch (AUMENTADO: 25s → 45s para URLs DALL-E que podem ser lentas em conectar)
-                            const controller = new AbortController();
-                            const timeoutId = setTimeout(() => controller.abort(), 45000);
-                            const imgRes = await fetch(url, {
-                                signal: controller.signal,
-                                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-                            });
-                            clearTimeout(timeoutId);
-
-                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Fetch status: ${imgRes.status}`);
-
-                            if (!imgRes.ok) {
-                                logger.warn(STAGES.STORAGE_FAIL, `[IMAGEM ${imageNumber}] Fetch falhou com status ${imgRes.status} - URL DALL-E pode estar expirada, usando placeholder`);
-                                return placeholderUrl; // Em vez de URL que expira!
-                            }
-
-                            const blob = await imgRes.blob();
-                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Blob criado: ${blob.size} bytes, tipo: ${blob.type}`);
-
-                            const timestamp = Date.now();
-                            const fileName = `${userId}/${timestamp}-${imageNumber}.png`;
-                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Nome do arquivo: ${fileName}`);
-
-                            // ✅ RETRY COM BACKOFF EXPONENCIAL (3 tentativas)
-                            let uploadResponse = null;
-                            let lastError: any = null;
-                            const maxRetries = 3;
-
-                            for (let attempt = 0; attempt < maxRetries; attempt++) {
-                                try {
-                                    logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Tentativa ${attempt + 1}/${maxRetries} de upload`);
-
-                                    uploadResponse = await supabaseClient.storage
-                                        .from('spybot_images')
-                                        .upload(fileName, blob, { contentType: 'image/png', upsert: true });
-
-                                    // Se não houver erro, sair do loop
-                                    if (!uploadResponse.error) {
-                                        logger.success(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] ✅ Upload bem-sucedido na tentativa ${attempt + 1}`);
-                                        break;
-                                    }
-
-                                    lastError = uploadResponse.error;
-
-                                    // Se for a última tentativa, não fazer backoff
-                                    if (attempt < maxRetries - 1) {
-                                        const backoffMs = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
-                                        logger.warn(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] ⚠️ Retry ${attempt + 1}: aguardando ${backoffMs}ms antes de tentar novamente`, {
-                                            error: lastError.message,
-                                            backoffMs
-                                        });
-                                        await new Promise(resolve => setTimeout(resolve, backoffMs));
-                                    }
-                                } catch (e: unknown) {
-                                    lastError = e;
-                                    logger.warn(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Exceção na tentativa ${attempt + 1}:`, {
-                                        error: e instanceof Error ? e.message : String(e)
-                                    });
-
-                                    // Se não for a última tentativa, fazer backoff
-                                    if (attempt < maxRetries - 1) {
-                                        const backoffMs = Math.pow(2, attempt) * 1000;
-                                        logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Aguardando ${backoffMs}ms antes de retry`);
-                                        await new Promise(resolve => setTimeout(resolve, backoffMs));
-                                    }
-                                }
-                            }
-
-                            const { data, error } = uploadResponse || { data: null, error: lastError };
-
-                            logger.info(STAGES.STORAGE_UPLOAD, `[IMAGEM ${imageNumber}] Resposta do upload:`, {
-                                hasError: !!error,
-                                hasData: !!data,
-                                errorMessage: error?.message || 'nenhum',
-                                errorStatus: error?.status || 'nenhum'
-                            });
-
-                            if (error) {
-                                // Log detalhado de erro RLS
-                                const isPermissionError = error.message.includes('permission') || error.message.includes('RLS') || error.message.includes('row level security');
-                                logger.error('UPLOAD_FAILED', `❌ [IMAGEM ${imageNumber}] ERRO NO UPLOAD`, {
-                                    imageNumber,
-                                    fileName,
-                                    errorMessage: error.message,
-                                    errorCode: error.name || 'UNKNOWN',
-                                    isPermissionError: isPermissionError,
-                                    isRLSError: error.message.includes('RLS'),
-                                    errorStatus: error.status,
-                                    bucket: 'spybot_images',
-                                    blobSize: blob.size,
-                                    fullError: JSON.stringify(error)
-                                });
-                                logger.error(STAGES.STORAGE_FAIL, `❌ [IMAGEM ${imageNumber}] ERRO NO UPLOAD - usando placeholder`, {
-                                    errorMessage: error.message,
-                                    errorStatus: error.status,
-                                    errorStatusCode: error.statusCode,
-                                    fileName,
-                                    blobSize: blob.size,
-                                    fullError: JSON.stringify(error)
-                                });
-                                return placeholderUrl; // Em vez de URL que expira!
-                            }
-
-                            const urlResponse = supabaseClient.storage.from('spybot_images').getPublicUrl(fileName);
-                            const publicUrl = urlResponse.data?.publicUrl;
-
-                            // ✅ VALIDAÇÃO DUPLA: Verificar se URL é realmente Supabase
-                            const isSupabaseUrl = (url: string) => url?.includes('supabase.co') && url?.includes('spybot_images');
-
-                            if (!isSupabaseUrl(publicUrl)) {
-                                logger.error('CRITICAL_UPLOAD_VALIDATION', `❌ [IMAGEM ${imageNumber}] URL retornada não é Supabase!`, {
-                                    publicUrl: publicUrl?.substring(0, 100) || 'null',
-                                    expectedDomain: 'supabase.co/spybot_images'
-                                });
-                                return placeholderUrl;
-                            }
-
-                            logger.success(STAGES.STORAGE_SUCCESS, `✅ [IMAGEM ${imageNumber}] SALVA COM SUCESSO NO SUPABASE`, {
-                                fileName,
-                                publicUrlStart: publicUrl?.substring(0, 80) || 'ERRO'
-                            });
-
-                            return publicUrl || placeholderUrl; // Em vez de URL que expira!
-                        } catch (e: unknown) {
-                            const errorMsg = e instanceof Error ? e.message : String(e);
-                            const errorStack = (e instanceof Error ? e.stack : '') || '';
-                            logger.error(STAGES.STORAGE_FAIL, `❌ [IMAGEM ${imageNumber}] EXCEÇÃO - usando placeholder`, {
-                                errorMessage: errorMsg,
-                                errorStack: errorStack.substring(0, 200)
-                            });
-                            return placeholderUrl; // Em vez de URL que expira!
-                        }
-                    };
-
-                    // Substitui as URLs temporárias (1hr) do DALL-E por URLs do seu Bucket
-                    // IMPORTANTE: uploadImageToSupabase já retorna fallback se upload falhar
-                    // Nunca retorna URL DALL-E órfã que vai expirar!
-                    [finalImg1, finalImg2, finalImg3] = await Promise.all([
-                        uploadImageToSupabase(img1, supabase, user.id, 1, fallbackImages),
-                        uploadImageToSupabase(img2, supabase, user.id, 2, fallbackImages),
-                        uploadImageToSupabase(img3, supabase, user.id, 3, fallbackImages)
-                    ]);
-
-                    // VALIDAÇÃO FINAL: Garantir que NUNCA temos URLs DALL-E expiradas
-                    // Se por algum motivo temos URL DALL-E (mesmo após upload), converter para fallback
-                    const isDalleUrl = (url: string) => url?.includes('oaidalleapiprodscus') || url?.includes('openai');
-                    const isSupabaseUrl = (url: string) => url?.includes('supabase.co') && url?.includes('spybot_images');
-
-                    // Validação IMG1
-                    if (isDalleUrl(finalImg1)) {
-                        logger.error('CRITICAL_URL_VALIDATION', '❌ [IMAGEM 1] PROTEÇÃO: URL DALL-E após upload, forçando fallback');
-                        finalImg1 = fallbackImages[0];
-                    }
-                    if (!isSupabaseUrl(finalImg1) && !finalImg1.includes('unsplash') && !finalImg1.includes('stockapi')) {
-                        logger.warn(STAGES.STORAGE_FAIL, `⚠️ [IMAGEM 1] URL não é Supabase ou stock verificado: ${finalImg1.substring(0, 80)}`);
-                    }
-
-                    // Validação IMG2
-                    if (isDalleUrl(finalImg2)) {
-                        logger.error('CRITICAL_URL_VALIDATION', '❌ [IMAGEM 2] PROTEÇÃO: URL DALL-E após upload, forçando fallback');
-                        finalImg2 = fallbackImages[1];
-                    }
-                    if (!isSupabaseUrl(finalImg2) && !finalImg2.includes('unsplash') && !finalImg2.includes('stockapi')) {
-                        logger.warn(STAGES.STORAGE_FAIL, `⚠️ [IMAGEM 2] URL não é Supabase ou stock verificado: ${finalImg2.substring(0, 80)}`);
-                    }
-
-                    // Validação IMG3
-                    if (isDalleUrl(finalImg3)) {
-                        logger.error('CRITICAL_URL_VALIDATION', '❌ [IMAGEM 3] PROTEÇÃO: URL DALL-E após upload, forçando fallback');
-                        finalImg3 = fallbackImages[2];
-                    }
-                    if (!isSupabaseUrl(finalImg3) && !finalImg3.includes('unsplash') && !finalImg3.includes('stockapi')) {
-                        logger.warn(STAGES.STORAGE_FAIL, `⚠️ [IMAGEM 3] URL não é Supabase ou stock verificado: ${finalImg3.substring(0, 80)}`);
-                    }
-
-                    // Log de resumo das URLs finais
-                    logger.info('FINAL_IMAGE_URLS_VALIDATION', '📸 Validação final de URLs', {
-                        img1Source: isSupabaseUrl(finalImg1) ? 'Supabase ✅' : finalImg1.includes('unsplash') ? 'Unsplash' : 'Fallback Niche',
-                        img2Source: isSupabaseUrl(finalImg2) ? 'Supabase ✅' : finalImg2.includes('unsplash') ? 'Unsplash' : 'Fallback Niche',
-                        img3Source: isSupabaseUrl(finalImg3) ? 'Supabase ✅' : finalImg3.includes('unsplash') ? 'Unsplash' : 'Fallback Niche'
-                    });
-
-                    logger.info(STAGES.SUPABASE_INSERT, '⚠️ PRIMEIRA TENTATIVA DE INSERT REMOVIDA - Insert duplo detectado e eliminado. O banco será salvo apenas APÓS o upload das imagens no Supabase Storage.');
-                    // REMOVIDO: Primeiro INSERT não é mais realizado aqui
-                    // A geração será salva APENAS após o upload das imagens (vide abaixo)
-
-                    // Desconta 1 crédito se for grátis e não tiver BYOK
-                    const hasByok = brandProfile && brandProfile.openaiKey && brandProfile.openaiKey.trim() !== "";
-                    if (currentPlan === 'gratis' && !hasByok) {
-                        const { error: updateError } = await supabase.from('spybot_subscriptions').update({ credits: Math.max(0, currentCredits - 1) }).eq('user_id', user.id);
-                        if (updateError) {
-                            logger.warn(STAGES.BILLING_DEDUCT, 'Falha ao descontar crédito', { error: updateError.message });
-                        } else {
-                            logger.info(STAGES.BILLING_DEDUCT, 'Crédito deduzido da quota gratuita', { remainingCredits: Math.max(0, currentCredits - 1) });
-                        }
-                    }
-                } else {
-                    logger.info(STAGES.SUPABASE_INSERT, 'Usuário não autenticado, ignorando salvamento em banco de dados');
-                }
-            } catch (dbError: unknown) {
-                logger.error(STAGES.SUPABASE_FAIL, 'Erro ao salvar no histórico/storage (ignorado para não travar UI)', dbError);
-            }
-
-            // Retorna o pacote completo e Visual para o Front-End
-            logger.endTimer('TOTAL_REQUEST', STAGES.END);
-
-            // 🎯 LOG FINAL: MONITORAMENTO DE DETECÇÃO DE NICHO (v2)
-            logger.success(STAGES.END, 'Detecção de Nicho concluída com sucesso', {
-                nichoFinal: detectedNicheFromUrl,
-                confiancaPercentual: `${initialNicheDetection.confidencePercent}%`,
-                confiancaDecimal: initialNicheDetection.confidence,
-                keywordEncontrados: initialNicheDetection.keywords.slice(0, 5),
-                nichoSecundario: initialNicheDetection.secondary ?
-                    `${initialNicheDetection.secondary.niche} (${Math.round(initialNicheDetection.secondary.confidence * 100)}%)` :
-                    'nenhum',
-                fontePrincipal: initialNicheDetection.source,
-                metaTarget: `${initialNicheDetection.confidencePercent}% >= 85%` // Meta de acurácia
-            });
-
-            logger.success(STAGES.END, 'Requisição completada com sucesso', logger.getSummary());
-
-            const buildGeneratedImage = (url: string | undefined, type: string = 'placeholder', niche: string = 'Geral'): GeneratedImage => {
-                // GARANTIA: NUNCA retornar URL vazia
-                const finalUrl = url && url.trim() ? url : (placeholder || 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=800');
-
-                // Detectar provedor da imagem
-                let provider: 'dalle' | 'supabase' | 'unsplash' | 'fallback' = 'fallback';
-                if (finalUrl?.includes('supabase')) provider = 'supabase';
-                else if (finalUrl?.includes('unsplash')) provider = 'unsplash';
-                else if (finalUrl?.includes('oaidalleapiprodscus.blob.core.windows.net')) provider = 'dalle';
-                else if (finalUrl?.includes('openai')) provider = 'dalle';
-
-                return {
-                    url: finalUrl,
-                    type: type as any,
-                    isTemporary: provider === 'dalle', // URLs DALL-E expiram em 2h
-                    niche,
-                    source: { provider },
-                    metadata: {}
-                };
-            };
-
-            // ✅ LOG FINAL DAS IMAGENS ANTES DE RETORNAR
-            console.log('[SPY-ENGINE] 🖼️ IMAGENS FINAIS SENDO RETORNADAS:', {
-                finalImg1: finalImg1?.substring(0, 80),
-                finalImg2: finalImg2?.substring(0, 80),
-                finalImg3: finalImg3?.substring(0, 80),
-                nicheForFallback,
-                type1: 'generated',
-                type2: 'generated',
-                type3: 'generated'
-            });
-
-            // ✅ SALVAR PERMANENTEMENTE NO BANCO DE DADOS
-            // Função para fazer upload de imagem para Supabase Storage
-            const uploadImageToSupabase = async (imageUrl: string, imageName: string): Promise<string | null> => {
-                try {
-                    if (!imageUrl || !imageUrl.trim()) {
-                        logger.warn(STAGES.DALLE_CALL, `URL vazia para ${imageName}`);
-                        return null;
-                    }
-
-                    logger.info(STAGES.DALLE_CALL, `📥 Iniciando download de ${imageName}`, { urlPrefix: imageUrl.substring(0, 50) });
-
-                    // Fazer download da imagem com retry
-                    let response: Response | null = null;
-                    let downloadAttempts = 0;
-                    const maxAttempts = 3;
-
-                    while (!response && downloadAttempts < maxAttempts) {
-                        try {
-                            const controller = new AbortController();
-                            const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
-
-                            response = await fetch(imageUrl, {
-                                signal: controller.signal,
-                                headers: { 'User-Agent': 'SpyBot/1.0' }
-                            });
-
-                            clearTimeout(timeout);
-
-                            if (!response.ok) {
-                                logger.warn(STAGES.DALLE_CALL, `Download falhou (${response.status}) na tentativa ${downloadAttempts + 1}`);
-                                response = null;
-                                downloadAttempts++;
-                                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
-                                continue;
-                            }
-                        } catch (fetchErr) {
-                            logger.warn(STAGES.DALLE_CALL, `Erro ao fazer download tentativa ${downloadAttempts + 1}`, fetchErr);
-                            downloadAttempts++;
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                            continue;
-                        }
-                    }
-
-                    if (!response || !response.ok) {
-                        logger.error(STAGES.DALLE_CALL, `❌ Falhou ao fazer download de ${imageName} após ${maxAttempts} tentativas`);
-                        return null;
-                    }
-
-                    const buffer = await response.arrayBuffer();
-                    logger.info(STAGES.DALLE_CALL, `✅ Download concluído (${buffer.byteLength} bytes)`);
-
-                    // Gerar nome único com timestamp e nonce
-                    const timestamp = Date.now();
-                    const nonce = Math.random().toString(36).substring(7);
-                    const fileName = `${user?.id || 'anonymous'}/${timestamp}_${nonce}_${imageName}.png`;
-
-                    logger.info(STAGES.DALLE_CALL, `📤 Fazendo upload para Supabase`, { fileName });
-
-                    // Fazer upload para Supabase Storage
-                    const { data, error: uploadError } = await supabase
-                        .storage
-                        .from('spybot_images')
-                        .upload(fileName, buffer, {
-                            contentType: 'image/png',
-                            cacheControl: '31536000', // Cache por 1 ano
-                            upsert: false
-                        });
-
-                    if (uploadError) {
-                        logger.error(STAGES.DALLE_CALL, `❌ Erro ao fazer upload de ${imageName}`, {
-                            error: uploadError.message,
-                            errorCode: (uploadError as any).statusCode
-                        });
-                        return null;
-                    }
-
-                    if (!data || !data.path) {
-                        logger.error(STAGES.DALLE_CALL, `❌ Upload retornou sem path para ${imageName}`);
-                        return null;
-                    }
-
-                    // Obter URL pública da imagem
-                    const { data: publicData } = supabase
-                        .storage
-                        .from('spybot_images')
-                        .getPublicUrl(data.path);
-
-                    const publicUrl = publicData?.publicUrl;
-
-                    if (!publicUrl) {
-                        logger.error(STAGES.DALLE_CALL, `❌ Não conseguiu gerar URL pública para ${imageName}`);
-                        return null;
-                    }
-
-                    logger.success(STAGES.DALLE_CALL, `✅ Imagem ${imageName} salva permanentemente`, {
-                        fileName,
-                        url: publicUrl.substring(0, 100)
-                    });
-
-                    return publicUrl;
-                } catch (uploadErr) {
-                    logger.error(STAGES.DALLE_CALL, `❌ Erro ao processar upload de ${imageName}`, uploadErr);
-                    return null;
-                }
-            };
-
-            logger.info(STAGES.DALLE_CALL, '🚀 Iniciando upload das 3 imagens para Storage permanente');
-
-            // Fazer upload das 3 imagens em paralelo
-            const [persistedImage1, persistedImage2, persistedImage3] = await Promise.all([
-                uploadImageToSupabase(finalImg1, 'image1'),
-                uploadImageToSupabase(finalImg2, 'image2'),
-                uploadImageToSupabase(finalImg3, 'image3')
-            ]);
-
-            logger.info(STAGES.DALLE_CALL, '📊 Status do upload', {
-                image1: persistedImage1 ? '✅ OK' : '❌ FALHOU',
-                image2: persistedImage2 ? '✅ OK' : '❌ FALHOU',
-                image3: persistedImage3 ? '✅ OK' : '❌ FALHOU'
-            });
-
-            // ✅ SALVAR NO BANCO DE DADOS
-            // CRÍTICO: Usar URLs permanentes (Supabase) em vez de DALL-E (que expiram)
-            // Se upload falhar, ainda salvamos mas marcamos para re-tentar depois
-            const finalImage1 = persistedImage1 || finalImg1;
-            const finalImage2 = persistedImage2 || finalImg2;
-            const finalImage3 = persistedImage3 || finalImg3;
-
-            logger.info(STAGES.DALLE_CALL, '💾 Salvando no banco de dados', {
-                hasPersistedImage1: !!persistedImage1,
-                hasPersistedImage2: !!persistedImage2,
-                hasPersistedImage3: !!persistedImage3,
-                willUseFallback: !persistedImage1 || !persistedImage2 || !persistedImage3
-            });
-
-            // ✅ ÚNICO INSERT: Salvar geração APENAS AQUI (após upload de imagens permanentes)
-            // Garantir que user.id existe e não usar 'anonymous'
-            let savedGeneration: any = null;
-            if (!user?.id) {
-                logger.warn(STAGES.DALLE_CALL, '⚠️ Usuário não autenticado, geração não será salva no banco');
-            } else {
-                const { data, error: dbError } = await supabase
-                    .from('spybot_generations')
-                    .insert({
-                        user_id: user.id,  // CRÍTICO: Usar user.id (nunca 'anonymous')
-                        original_url: adUrl,
-                        original_copy: originalCopy,
-                        original_image: adImageUrl,
-                        variante1: generatedCopys.variante1,
-                        variante2: generatedCopys.variante2,
-                        variante3: generatedCopys.variante3,
-                        image1: finalImage1,
-                        image2: finalImage2,
-                        image3: finalImage3,
-                        niche: generatedCopys.detectedNiche,
-                        strategic_analysis: generatedCopys.strategic_analysis || null
-                    })
-                    .select()
-                    .single();
-
-                if (dbError) {
-                    logger.error(STAGES.DALLE_CALL, '❌ Erro ao salvar geração no banco (ÚNICO INSERT)', {
-                        error: dbError.message,
-                        errorCode: (dbError as any).code,
-                        userId: user.id,
-                        reason: 'Possível: RLS policy, constraint violation, ou erro de conexão'
-                    });
-                    // Não falhar a requisição, retornar o que temos
-                    savedGeneration = null;
-                } else if (data) {
-                    savedGeneration = data;
-                    logger.success(STAGES.DALLE_CALL, '✅ GERAÇÃO SALVA 1x NO BANCO (ÚNICO INSERT)', {
-                        generationId: savedGeneration.id,
-                        userId: user.id,
-                        hasImage1: !!savedGeneration.image1,
-                        hasImage2: !!savedGeneration.image2,
-                        hasImage3: !!savedGeneration.image3,
-                        duplicateGuard: 'Primeiro INSERT foi removido - salvamento único garantido'
-                    });
-                }
-            }
-
-            const responseData = {
-                success: true,
-                generationId: savedGeneration?.id, // ID para referenciar depois
-                originalAd: {
-                    copy: originalCopy,
-                    image: adImageUrl,
-                    isMockData: (!!apifyErrorMessage || !originalCopy || !adImageUrl) && !usingManualInput,
-                    isManualInput: usingManualInput, // FEATURE 1: Flag indicando entrada manual
-                    warning: usingManualInput
-                        ? '✅ Usando dados que você forneceu'
-                        : apifyErrorMessage
-                            ? `⚠️ ${apifyErrorMessage.substring(0, 120)}. O sistema usou dados de exemplo, mas as variações geradas ainda são de qualidade. Tente outra URL!`
-                            : undefined
-                },
-                generatedVariations: {
-                    variante1: generatedCopys.variante1,
-                    variante2: generatedCopys.variante2,
-                    variante3: generatedCopys.variante3
-                },
-                generatedImages: {
-                    image1: buildGeneratedImage(persistedImage1 || finalImg1, 'generated', generatedCopys.detectedNiche),
-                    image2: buildGeneratedImage(persistedImage2 || finalImg2, 'generated', generatedCopys.detectedNiche),
-                    image3: buildGeneratedImage(persistedImage3 || finalImg3, 'generated', generatedCopys.detectedNiche)
-                } as GeneratedImages,
-                strategicAnalysis: generatedCopys.strategic_analysis || null,
-                logs: logger.exportAsJSON()
-            };
-
-            logger.success('RESPONSE_READY', '✅ Response pronto para enviar', {
-                hasImage1: !!responseData.generatedImages.image1?.url,
-                hasImage2: !!responseData.generatedImages.image2?.url,
-                hasImage3: !!responseData.generatedImages.image3?.url,
-                savedToDatabase: !!savedGeneration?.id
-            });
-
-            return NextResponse.json(responseData);
-        } catch (openaiError: unknown) {
-            logger.error(STAGES.OPENAI_FAIL, 'Erro na chamada OpenAI', openaiError);
-
-            const errorMessage = (openaiError as { message?: string } | undefined)?.message || String(openaiError);
-
-            // Em vez de travar a tela em vermelho, devolvemos a resposta da OpenAI dentro das Copys!
-            const buildGeneratedImageError = (url: string | undefined, type: string = 'placeholder', niche: string = 'Geral'): GeneratedImage => {
-                // GARANTIA: NUNCA retornar URL vazia
-                const finalUrl = url && url.trim() ? url : 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=800';
-                return {
-                    url: finalUrl,
-                    type: type as any,
-                    isTemporary: false,
-                    niche,
-                    source: {
-                        provider: finalUrl?.includes('supabase') ? 'supabase' : finalUrl?.includes('unsplash') ? 'unsplash' : 'fallback'
-                    },
-                    metadata: {}
-                };
-            };
-
-            const fallbackErrorNiche = 'Geral';
-            return NextResponse.json({
-                success: true,
-                originalAd: {
-                    copy: originalCopy,
-                    image: adImageUrl
-                },
-                generatedVariations: {
-                    variante1: `(ERRO NA SUA CONTA OPENAI) Ocorreu o seguinte bloqueio na sua chave de acesso: ${errorMessage}`,
-                    variante2: `(DICA DE SOLUÇÃO) Geralmente este erro da OpenAI ('You exceeded your current quota' ou 'Incorrect API Key') significa que o seu cartão de crédito não foi cadastrado no site da OpenAI ou a conta não possui créditos pré-pagos (Mínimo $5).`,
-                    variante3: `(DEMO FUNCIONAL) Independentemente da sua conta OpenAI, O seu SaaS está perfeitamente no Ar, responsivo e conseguindo conectar na nuvem. Recarregue os créditos da OpenAI e a magia acontece aqui!`
-                },
-                generatedImages: {
-                    image1: buildGeneratedImageError("https://images.unsplash.com/photo-1570172176411-b80fcadc6fb0?auto=format&fit=crop&q=80&w=800", 'placeholder', fallbackErrorNiche),
-                    image2: buildGeneratedImageError("https://images.unsplash.com/photo-1596755094514-ff4df1ecfb7e?auto=format&fit=crop&q=80&w=800", 'placeholder', fallbackErrorNiche),
-                    image3: buildGeneratedImageError("https://images.unsplash.com/photo-1556912988-2b80c6c8b0a1?auto=format&fit=crop&q=80&w=800", 'placeholder', fallbackErrorNiche)
-                } as GeneratedImages,
-                strategicAnalysis: {
-                    hook: "Sua conta OpenAI tem um erro",
-                    promise: "Resolva o erro da OpenAI para gerar análises",
-                    emotion: "Urgência + frustração",
-                    cta: "Configure corretamente sua chave OpenAI",
-                    persuasion_structure: "Problema-Solução",
-                    angle: "Erro técnico remediável",
-                    offer_type: "Diagnóstico de erro"
-                },
-                logs: logger.exportAsJSON()
-            });
-        }
-
-    } catch (error: unknown) {
-        logger.endTimer('TOTAL_REQUEST', STAGES.ERROR_CRITICAL);
-        logger.error(STAGES.ERROR_CRITICAL, 'Erro catastrófico na requisição', error);
-
-        const errorObject = error instanceof Error ? error : new Error(String(error));
-        return NextResponse.json({
-            error: 'Erro catastrófico no servidor.',
-            message: errorObject.message || String(error),
-            logs: logger.exportAsJSON()
-        }, { status: 500 });
-    }
+/**
+ * Detecta provider da imagem pela URL
+ */
+function detectProvider(url: string): 'dalle' | 'supabase' | 'unsplash' | 'fallback' {
+  if (url.includes('oaidalleapiprodscus')) return 'dalle';
+  if (url.includes('unsplash.com')) return 'unsplash';
+  if (url.includes('supabase')) return 'supabase';
+  return 'fallback';
 }

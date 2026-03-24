@@ -20,7 +20,7 @@ export default function ActiveProfileBanner() {
     try {
       const stored = localStorage.getItem("spybot_brand_profile");
       if (stored) {
-        // eslint-disable-next-line
+         
         setProfile(JSON.parse(stored));
       }
     } catch (e) {
