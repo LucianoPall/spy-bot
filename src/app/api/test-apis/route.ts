@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { createClient } from '@/utils/supabase/server';
+import { ensureError } from '@/lib/types-common';
 
 /**
  * Tipos para teste de APIs
@@ -73,11 +74,12 @@ export async function GET(req: Request) {
         error: null
       };
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = ensureError(error);
     results.openai = {
       status: 'error',
       details: null,
-      error: error.message
+      error: err.message
     };
     results.summary.failedServices.push('OpenAI');
   }
@@ -104,10 +106,11 @@ export async function GET(req: Request) {
         details: { httpStatus: response.status }
       };
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = ensureError(error);
     results.apify = {
       status: 'error',
-      error: error.message
+      error: err.message
     };
     results.summary.failedServices.push('Apify');
   }
@@ -130,10 +133,11 @@ export async function GET(req: Request) {
       },
       error: error?.message
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = ensureError(error);
     results.supabase = {
       status: 'error',
-      error: error.message
+      error: err.message
     };
     results.summary.failedServices.push('Supabase');
   }
@@ -152,10 +156,11 @@ export async function GET(req: Request) {
       },
       error: error?.message
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = ensureError(error);
     results.supabaseStorage = {
       status: 'error',
-      error: error.message
+      error: err.message
     };
     results.summary.failedServices.push('SupabaseStorage');
   }

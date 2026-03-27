@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { ensureError } from '@/lib/types-common';
 import { createClient as createServerClient } from '@/utils/supabase/server';
 import { createClient } from '@supabase/supabase-js';
 
@@ -89,8 +90,9 @@ export async function GET() {
       process.env.NEXT_PUBLIC_APP_URL || 'production'
     ];
 
-  } catch (error: any) {
-    result.supabase.errors.push(error.message || String(error));
+  } catch (error: unknown) {
+    const err = ensureError(error);
+    result.supabase.errors.push(err.message || String(error));
   }
 
   return NextResponse.json(result);

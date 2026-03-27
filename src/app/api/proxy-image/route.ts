@@ -1,66 +1,6 @@
 import { NextResponse } from 'next/server';
-
-/**
- * Função de retry com exponential backoff (compartilhada)
- * Trata erros transitórios: timeout, 429, 503, etc.
- * ✅ MELHORADO: Timeout estendido para URLs DALL-E
- */
-async function fetchWithRetry(
-  url: string,
-  options: RequestInit = {},
-  maxRetries: number = 5
-): Promise<Response> {
-  let lastError: Error | null = null;
-
-  // Detectar se é DALL-E para timeout maior
-  const isDalleUrl = url?.includes('oaidalleapiprodscus.blob.core.windows.net');
-  const timeoutMs = isDalleUrl ? 60000 : 30000; // 60s para DALL-E, 30s para outros
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      // Se OK, retorna
-      if (response.ok) {
-        console.log(`[fetchWithRetry] ✅ Sucesso na tentativa ${attempt + 1}/${maxRetries}`);
-        return response;
-      }
-
-      // Se erro transitório, tenta novamente
-      const retryableStatuses = [429, 500, 502, 503, 504];
-      if (retryableStatuses.includes(response.status) && attempt < maxRetries - 1) {
-        console.log(`[fetchWithRetry] ⚠️ Status ${response.status}, tentando novamente...`);
-        const backoff = Math.pow(2, attempt) * 1000; // Exponential: 1s, 2s, 4s
-        await new Promise(resolve => setTimeout(resolve, backoff));
-        continue;
-      }
-
-      lastError = new Error(`HTTP ${response.status}`);
-    } catch (error: any) {
-      lastError = error;
-
-      // Se timeout ou erro de conexão, tenta novamente
-      const isTimeoutError = error?.name === 'AbortError' || error?.message?.includes('timeout');
-      if (isTimeoutError && attempt < maxRetries - 1) {
-        console.log(`[fetchWithRetry] ⏱️ Timeout na tentativa ${attempt + 1}, tentando novamente...`);
-        const backoff = Math.pow(2, attempt) * 1000;
-        await new Promise(resolve => setTimeout(resolve, backoff));
-        continue;
-      }
-    }
-  }
-
-  console.error(`[fetchWithRetry] ❌ Falha após ${maxRetries} tentativas:`, lastError?.message);
-  throw lastError || new Error('Todas as tentativas falharam');
-}
+import { fetchWithRetry } from '@/lib/http-client';
+import { ensureError } from '@/lib/types-common';
 
 /**
  * Proxy endpoint com retry automático e cache agressivo
@@ -133,12 +73,13 @@ export async function GET(req: Request) {
                 'X-Image-Type': isDalleUrl ? 'dalle' : 'other',
             },
         });
-    } catch (error: any) {
+    } catch (error: unknown) {
+        const err = ensureError(error);
         console.error('[proxy-image] ❌ ERRO:', {
-            message: error.message,
+            message: err.message,
             url: imageUrl?.substring(0, 80) + '...',
-            code: error.code,
-            statusCode: error.statusCode
+            code: (err as any).code,
+            statusCode: (err as any).statusCode
         });
 
         // ✅ NUNCA retornar JSON - tentar fallback automático inteligente

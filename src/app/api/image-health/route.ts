@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@/utils/supabase/server';
 import { createClient } from '@supabase/supabase-js';
+import { ensureError } from '@/lib/types-common';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -30,11 +31,12 @@ async function testCdn(
       status: response.ok || response.status < 400 ? 'ok' : 'degraded',
       error: null
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = ensureError(error);
     return {
       name,
       status: 'error',
-      error: error.message || 'Unknown error'
+      error: err.message || 'Unknown error'
     };
   }
 }
@@ -99,9 +101,10 @@ export async function GET() {
     health.supabase.status = 'ok';
     health.supabase.isPublic = bucket?.public || false;
     health.supabase.canRead = true;
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = ensureError(error);
     health.supabase.status = 'error';
-    health.supabase.error = error.message || String(error);
+    health.supabase.error = err.message || String(error);
   }
 
   // Test CDNs (parallel)

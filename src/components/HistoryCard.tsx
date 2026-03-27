@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Copy, ExternalLink, Image as ImageIcon, Check, ChevronDown, ChevronUp, Repeat2, AlertCircle } from "lucide-react";
 import Link from "next/link";
+import { ensureError } from "@/lib/types-common";
 import {
   validateCloneStructure,
   isValidImageUrl,
@@ -188,11 +189,12 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                         console.log('[IMAGE_LOADED_API]', imageLog);
                         return;
                     }
-                } catch (e: any) {
+                } catch (e: unknown) {
+                    const err = ensureError(e);
                     imageLog.attempts.getImage = {
                         status: 'FAILED',
                         duration: performance.now() - getImageStart,
-                        error: e.message
+                        error: err.message
                     };
                 } finally {
                     clearTimeout(timeoutId);
@@ -219,11 +221,12 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                         console.log('[IMAGE_LOADED_PROXY]', imageLog);
                         return;
                     }
-                } catch (e: any) {
+                } catch (e: unknown) {
+                    const err = ensureError(e);
                     imageLog.attempts.proxyImage = {
                         status: 'FAILED',
                         duration: performance.now() - proxyStart,
-                        error: e.message
+                        error: err.message
                     };
                 }
 
@@ -240,11 +243,12 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                         setLoadedImages(prev => ({ ...prev, [imageKey]: imageUrl }));
                         return;
                     }
-                } catch (e: any) {
+                } catch (e: unknown) {
+                    const err = ensureError(e);
                     imageLog.attempts.directUrl = {
                         status: 'FAILED',
                         duration: performance.now() - directStart,
-                        error: e.message
+                        error: err.message
                     };
                 }
 
@@ -265,10 +269,11 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
                 setLoadedImages(prev => ({ ...prev, [imageKey]: PLACEHOLDER_IMAGE }));
                 setFailedImages(prev => new Set(prev).add(imageKey));
 
-            } catch (error: any) {
+            } catch (error: unknown) {
+                const err = ensureError(error);
                 console.error('[IMAGE_LOAD_EXCEPTION]', {
                     ...imageLog,
-                    errorMessage: error.message,
+                    errorMessage: err.message,
                     duration: performance.now() - startTime
                 });
                 setLoadedImages(prev => ({ ...prev, [imageKey]: PLACEHOLDER_IMAGE }));
@@ -278,7 +283,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
 
         // Validar estrutura do clone antes de processar
         if (!validateCloneStructure(clone)) {
-            console.error('[INVALID_CLONE_STRUCTURE]', { cloneId: clone?.id });
+            console.error('[INVALID_CLONE_STRUCTURE]', { cloneId: (clone as any)?.id });
             return;
         }
 

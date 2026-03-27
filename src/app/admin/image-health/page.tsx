@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { RefreshCw, CheckCircle, AlertCircle, XCircle } from 'lucide-react';
+import { ensureError } from '@/lib/types-common';
 
 interface HealthCheck {
   timestamp: string;
@@ -33,8 +34,9 @@ export default function ImageHealthDashboard() {
       setHealth(data);
       setLastRefresh(new Date());
       setError(null);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      const error = ensureError(err);
+      setError(error.message);
     } finally {
       setLoading(false);
     }

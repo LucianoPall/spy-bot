@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server';
+import { ensureError } from '@/lib/types-common';
 import { logger, STAGES } from './logger';
 
 // ============================================
@@ -216,11 +217,12 @@ export async function refundCredits(options: RefundOptions): Promise<{
             newBalance: newBalance
         };
 
-    } catch (error: any) {
-        logger.error(STAGES.BILLING_REFUND, 'Erro inesperado ao processar refund', error);
+    } catch (error: unknown) {
+        const err = ensureError(error);
+        logger.error(STAGES.BILLING_REFUND, 'Erro inesperado ao processar refund', err);
         return {
             success: false,
-            error: `Erro ao processar reembolso: ${error.message || String(error)}`
+            error: `Erro ao processar reembolso: ${err.message || String(error)}`
         };
     }
 }

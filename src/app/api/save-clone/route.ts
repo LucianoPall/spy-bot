@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { ensureError } from '@/lib/types-common';
 import { createClient } from '@/utils/supabase/server';
 
 export async function POST(request: Request) {
@@ -52,10 +53,11 @@ export async function POST(request: Request) {
             message: 'Clone salvo com sucesso!',
             data,
         });
-    } catch (err: any) {
-        console.error('Erro na API save-clone:', err);
+    } catch (err: unknown) {
+        const error = ensureError(err);
+        console.error('Erro na API save-clone:', error);
         return NextResponse.json(
-            { error: err.message || 'Erro ao salvar clone' },
+            { error: error.message || 'Erro ao salvar clone' },
             { status: 500 }
         );
     }

@@ -17,13 +17,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     const { data: { user } } = await supabase.auth.getUser();
 
     // Redirecionamento de segurança garantido (Dupla checagem além do middleware)
-    // DEV MODE: Permite acesso sem login se NEXT_PUBLIC_DEV_MODE=true
-    const devMode = process.env.NEXT_PUBLIC_DEV_MODE === 'true';
-    if (!user && !devMode) {
+    if (!user) {
         redirect("/login");
     }
 
-    const un = user?.email ? user.email.split('@')[0] : "Dev User";
+    const un = user?.email?.split('@')?.[0] || 'User';
 
     // ⚡ OTIMIZAÇÃO: Verificar cache de cookies primeiro (super rápido)
     let isPro = false;
@@ -39,9 +37,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         const { data: sub } = await supabase.from('spybot_subscriptions').select('plan').eq('user_id', user.id).single();
         isPro = sub?.plan === 'pro';
         shouldCacheInBackground = true; // Sinaliza para cachear em background via Route Handler
-    } else {
-        // DEV MODE: Simula usuário PRO
-        isPro = true;
     }
 
     return (

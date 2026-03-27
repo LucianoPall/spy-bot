@@ -1,57 +1,6 @@
 import { NextResponse } from 'next/server';
-
-/**
- * Função de retry com exponential backoff
- * Trata erros transitórios: timeout, 429, 503, etc.
- */
-async function fetchWithRetry(
-  url: string,
-  options: RequestInit = {},
-  maxRetries: number = 5
-): Promise<Response> {
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // Aumentado: 15s → 30s
-
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      // Se OK, retorna
-      if (response.ok) {
-        return response;
-      }
-
-      // Se erro transitório, tenta novamente
-      const retryableStatuses = [429, 500, 502, 503, 504];
-      if (retryableStatuses.includes(response.status) && attempt < maxRetries - 1) {
-        const backoff = Math.pow(2, attempt) * 1000; // Exponential: 1s, 2s, 4s
-        await new Promise(resolve => setTimeout(resolve, backoff));
-        continue;
-      }
-
-      lastError = new Error(`HTTP ${response.status}`);
-    } catch (error: any) {
-      lastError = error;
-
-      // Se timeout ou erro de conexão, tenta novamente
-      const isTimeoutError = error.name === 'AbortError' || error.message?.includes('timeout');
-      if (isTimeoutError && attempt < maxRetries - 1) {
-        const backoff = Math.pow(2, attempt) * 1000;
-        await new Promise(resolve => setTimeout(resolve, backoff));
-        continue;
-      }
-    }
-  }
-
-  throw lastError || new Error('Todas as tentativas falharam');
-}
+import { fetchWithRetry } from '@/lib/http-client';
+import { ensureError } from '@/lib/types-common';
 
 /**
  * Route Handler para carregar imagens com retry e fallback
@@ -119,10 +68,11 @@ export async function GET(request: Request) {
                 status: 200,
                 headers
             });
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const err = ensureError(error);
             console.warn('⚠️ [GET-IMAGE] Erro ao carregar imagem original:', {
                 url: imageUrl.substring(0, 80) + '...',
-                error: error.message,
+                error: err.message,
                 hint: 'Tentando fallback Unsplash...'
             });
         }

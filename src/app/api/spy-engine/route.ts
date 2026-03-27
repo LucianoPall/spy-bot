@@ -24,6 +24,7 @@ import { detectNicheWithScores, getNicheConfidencePercentage } from '@/lib/niche
 import { getNichePromptContext } from '@/lib/niche-prompts';
 import { refundOnApifyFailure, refundOnOpenAIFailure } from './validation-refund';
 import { checkRateLimit, getLimitForRoute } from '@/lib/rate-limiter';
+import { validateFacebookAdUrl } from '@/lib/validation';
 import {
   extractAdWithApify,
   generateCopyVariations,
@@ -91,6 +92,18 @@ export async function POST(req: Request) {
     if (!adUrl && !usingManualInput) {
       logger.error(STAGES.VALIDATION, 'URL não fornecida');
       return NextResponse.json({ error: 'URL do anúncio não fornecida.' }, { status: 400 });
+    }
+
+    // Validar URL do Facebook (proteção contra DoS e injeção)
+    if (adUrl) {
+      const urlValidation = validateFacebookAdUrl(adUrl);
+      if (!urlValidation.valid) {
+        logger.error(STAGES.VALIDATION, 'URL inválida', { error: urlValidation.error });
+        return NextResponse.json(
+          { error: `URL inválida: ${urlValidation.error}` },
+          { status: 400 }
+        );
+      }
     }
 
     if (!process.env.APIFY_API_TOKEN || !process.env.OPENAI_API_KEY) {

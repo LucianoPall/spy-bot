@@ -3,6 +3,10 @@
  *
  * Centraliza toda a lógica de requisições HTTP com retry automático
  * Trata erros transitórios de forma consistente em todo o projeto
+ *
+ * TIMEOUTS:
+ * - APIs normais (OpenAI, Apify): 30 segundos
+ * - DALL-E (geração de imagens): 60 segundos (pode levar 45-60s para gerar 3 imagens)
  */
 
 /**
@@ -12,6 +16,7 @@
  * @param url - URL para fazer a requisição
  * @param options - Opções do fetch (method, headers, body, etc)
  * @param maxRetries - Número máximo de tentativas (padrão: 3)
+ * @param timeoutMs - Timeout em milissegundos (padrão: 30s para API normal, 60s para DALL-E)
  * @returns Response se sucesso, lança erro se falhar em todas as tentativas
  *
  * Exemplo de backoff:
@@ -19,21 +24,29 @@
  * - Tentativa 2: falha → aguarda 2s
  * - Tentativa 3: falha → aguarda 4s
  * - Tentativa 4: falha → lança erro
+ *
+ * Nota: DALL-E pode levar até 60 segundos para gerar 3 imagens
  */
 export async function fetchWithRetry(
     url: string,
     options: RequestInit = {},
-    maxRetries: number = 3
+    maxRetries: number = 3,
+    timeoutMs?: number
 ): Promise<Response> {
+    // Detectar DALL-E URLs e usar timeout maior automaticamente
+    const isDalleUrl = url?.includes('oaidalleapiprodscus.blob.core.windows.net') ||
+                      url?.includes('openai.com') && url.includes('image');
+    const finalTimeoutMs = timeoutMs || (isDalleUrl ? 60000 : 30000);
+
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
-            console.log(`[HTTP-Retry] Tentativa ${attempt + 1}/${maxRetries} - URL: ${url.split('?')[0]}`);
+            console.log(`[HTTP-Retry] Tentativa ${attempt + 1}/${maxRetries} - URL: ${url.split('?')[0]} (timeout: ${finalTimeoutMs}ms)`);
 
-            // Fazer a requisição com timeout de 30 segundos
+            // Fazer a requisição com timeout configurável
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 30000);
+            const timeoutId = setTimeout(() => controller.abort(), finalTimeoutMs);
 
             const response = await fetch(url, {
                 ...options,

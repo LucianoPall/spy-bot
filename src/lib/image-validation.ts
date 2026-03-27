@@ -23,14 +23,15 @@ export interface Clone {
 /**
  * Valida se um clone tem a estrutura esperada
  */
-export function validateCloneStructure(clone: any): boolean {
+export function validateCloneStructure(clone: unknown): clone is Clone {
   if (!clone || typeof clone !== 'object') return false;
 
+  const obj = clone as Record<string, unknown>;
   return !!(
-    clone.id &&
-    typeof clone.id === 'string' &&
-    clone.created_at &&
-    (clone.image1 || clone.image2 || clone.image3)
+    obj.id &&
+    typeof obj.id === 'string' &&
+    obj.created_at &&
+    (obj.image1 || obj.image2 || obj.image3)
   );
 }
 

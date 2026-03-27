@@ -1,5 +1,35 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
+import { ensureError } from '@/lib/types-common';
+
+interface TestDetail {
+  status?: number;
+  statusText?: string;
+  contentType?: string | null;
+  success: boolean;
+  error?: string;
+  errorName?: string;
+  [key: string]: unknown;
+}
+
+interface DebugImageResult {
+  url: string;
+  hostname: string;
+  urlType: {
+    isSupabaseUrl: boolean;
+    isDalleUrl: boolean;
+    isUnsplashUrl: boolean;
+    isOther: boolean;
+  };
+  tests: Record<string, TestDetail>;
+  summary?: {
+    headSuccess?: boolean;
+    getSuccess?: boolean;
+    apiSuccess?: boolean;
+    totalSuccess?: boolean;
+    recommendations: string[];
+  };
+}
 
 /**
  * Endpoint de debugging para diagnosticar problemas de carregamento de imagens
@@ -45,7 +75,7 @@ export async function GET(request: Request) {
         const isDalleUrl = decodedUrl.includes('oaidalleapiprodscus.blob.core.windows.net');
         const isUnsplashUrl = urlObj.hostname.includes('unsplash.com');
 
-        const result: any = {
+        const result: DebugImageResult = {
             url: decodedUrl.substring(0, 150),
             hostname: urlObj.hostname,
             urlType: {
@@ -79,10 +109,11 @@ export async function GET(request: Request) {
                 cacheControl: headResponse.headers.get('cache-control'),
                 success: headResponse.ok
             };
-        } catch (e: any) {
+        } catch (e: unknown) {
+            const error = ensureError(e);
             result.tests.headRequest = {
-                error: e.message,
-                errorName: e.name,
+                error: error.message,
+                errorName: error.name,
                 success: false
             };
         }
@@ -111,10 +142,11 @@ export async function GET(request: Request) {
                 blobType: blob.type,
                 success: getResponse.ok && blob.size > 0
             };
-        } catch (e: any) {
+        } catch (e: unknown) {
+            const error = ensureError(e);
             result.tests.getRequest = {
-                error: e.message,
-                errorName: e.name,
+                error: error.message,
+                errorName: error.name,
                 success: false
             };
         }
@@ -142,18 +174,19 @@ export async function GET(request: Request) {
                 xFallback: apiResponse.headers.get('X-Fallback'),
                 success: apiResponse.ok
             };
-        } catch (e: any) {
+        } catch (e: unknown) {
+            const error = ensureError(e);
             result.tests.apiGetImage = {
-                error: e.message,
-                errorName: e.name,
+                error: error.message,
+                errorName: error.name,
                 success: false
             };
         }
 
         // Resumo final
-        const headOk = result.tests.headRequest?.success;
-        const getOk = result.tests.getRequest?.success;
-        const apiOk = result.tests.apiGetImage?.success;
+        const headOk = (result.tests.headRequest as TestDetail | undefined)?.success;
+        const getOk = (result.tests.getRequest as TestDetail | undefined)?.success;
+        const apiOk = (result.tests.apiGetImage as TestDetail | undefined)?.success;
 
         result.summary = {
             headSuccess: headOk,
@@ -184,12 +217,13 @@ export async function GET(request: Request) {
 
         return NextResponse.json(result);
 
-    } catch (error: any) {
-        console.error('[DEBUG-IMAGE] Erro crítico:', error);
+    } catch (error: unknown) {
+        const err = ensureError(error);
+        console.error('[DEBUG-IMAGE] Erro crítico:', err);
         return NextResponse.json({
             status: 'error',
-            message: error.message,
-            stack: error.stack?.substring(0, 200)
+            message: err.message,
+            stack: err.stack?.substring(0, 200)
         }, { status: 500 });
     }
 }
