@@ -10,6 +10,7 @@
  */
 
 import { fetchWithRetry } from '@/lib/http-client';
+import { log } from '@/lib/logger';
 
 export interface ApifyExtractionResult {
   originalCopy: string;
@@ -34,7 +35,7 @@ export async function extractAdWithApify(
   let errorMessage = '';
 
   try {
-    console.log('[APIFY] Iniciando extração:', { url: adUrl.substring(0, 80) });
+    log.info('APIFY', 'Iniciando extração', { url: adUrl.substring(0, 80) });
 
     // Validação básica
     const cleanedUrl = adUrl.trim();
@@ -64,10 +65,13 @@ export async function extractAdWithApify(
     let response;
     try {
       response = await fetch(
-        `https://api.apify.com/v2/acts/apify~facebook-ads-scraper/run-sync-get-dataset-items?token=${apifyToken}`,
+        'https://api.apify.com/v2/acts/apify~facebook-ads-scraper/run-sync-get-dataset-items',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apifyToken}`,
+          },
           body: JSON.stringify(input),
           signal: controller.signal
         }
@@ -115,7 +119,7 @@ export async function extractAdWithApify(
         .replace(/\?stp=.*?&/, '?')
         .replace(/\?stp=.*?$/, '');
 
-      console.log('[APIFY] ✅ Extração concluída:', {
+      log.info('APIFY', 'Extração concluída', {
         copyLength: originalCopy.length,
         hasImage: !!adImageUrl
       });
@@ -130,7 +134,7 @@ export async function extractAdWithApify(
     }
   } catch (error: unknown) {
     errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('[APIFY] ❌ Erro na extração:', errorMessage);
+    log.error('APIFY', 'Erro na extração', errorMessage);
 
     return {
       originalCopy: '',

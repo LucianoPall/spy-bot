@@ -2,6 +2,7 @@
  * Rate Limiter - Sistema de proteção contra abuso de APIs
  *
  * Implementação: Rate limiting por usuário usando Supabase
+ * Fallback: In-memory rate limiting quando DB falha
  * Janela deslizante de 1 minuto
  *
  * Limites:
@@ -10,6 +11,7 @@
  */
 
 import { createClient } from '@/utils/supabase/server';
+import { log } from '@/lib/logger';
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -19,13 +21,61 @@ export interface RateLimitResult {
 }
 
 /**
+ * Fallback in-memory rate limiter para quando o DB falha.
+ * Não persiste entre deploys/restarts, mas protege contra burst abuse.
+ */
+const memoryStore = new Map<string, { count: number; windowStart: number }>();
+
+function checkMemoryRateLimit(
+  userId: string,
+  route: string,
+  limit: number,
+  windowMinutes: number
+): RateLimitResult {
+  const key = `${userId}:${route}`;
+  const now = Date.now();
+  const windowMs = windowMinutes * 60 * 1000;
+
+  const entry = memoryStore.get(key);
+
+  // Limpar entradas expiradas periodicamente
+  if (memoryStore.size > 10000) {
+    for (const [k, v] of memoryStore) {
+      if (now - v.windowStart > windowMs) memoryStore.delete(k);
+    }
+  }
+
+  if (!entry || now - entry.windowStart > windowMs) {
+    // Nova janela
+    memoryStore.set(key, { count: 1, windowStart: now });
+    return {
+      allowed: true,
+      remaining: limit - 1,
+      resetAt: new Date(now + windowMs),
+    };
+  }
+
+  entry.count++;
+
+  if (entry.count > limit) {
+    const resetAt = new Date(entry.windowStart + windowMs);
+    return {
+      allowed: false,
+      remaining: 0,
+      resetAt,
+      retryAfter: Math.ceil((resetAt.getTime() - now) / 1000),
+    };
+  }
+
+  return {
+    allowed: true,
+    remaining: Math.max(0, limit - entry.count),
+    resetAt: new Date(entry.windowStart + windowMs),
+  };
+}
+
+/**
  * Verifica se um usuário excedeu o rate limit para uma rota específica
- *
- * @param userId - ID do usuário (UUID)
- * @param route - Nome da rota (ex: '/api/spy-engine')
- * @param limit - Número máximo de requests permitidos
- * @param windowMinutes - Tamanho da janela em minutos (padrão: 1)
- * @returns RateLimitResult com status e informações
  */
 export async function checkRateLimit(
   userId: string,
@@ -52,13 +102,8 @@ export async function checkRateLimit(
 
     if (fetchError && fetchError.code !== 'PGRST116') {
       // PGRST116 = no rows found (esperado na primeira requisição)
-      console.error('[RATE-LIMIT] Erro ao buscar contador:', fetchError);
-      // Em caso de erro, permitir requisição (fail-open)
-      return {
-        allowed: true,
-        remaining: limit,
-        resetAt
-      };
+      log.error('RATE-LIMIT', 'Erro ao buscar contador, usando fallback in-memory', fetchError);
+      return checkMemoryRateLimit(userId, route, limit, windowMinutes);
     }
 
     const currentCount = existingEntry?.count || 0;
@@ -66,7 +111,6 @@ export async function checkRateLimit(
     const remaining = Math.max(0, limit - currentCount - 1);
 
     if (!isAllowed) {
-      // Usuário excedeu limite
       return {
         allowed: false,
         remaining: 0,
@@ -77,7 +121,6 @@ export async function checkRateLimit(
 
     // 2. Incrementar contador (insert ou update)
     if (existingEntry) {
-      // Update count
       const { error: updateError } = await supabase
         .from('rate_limits')
         .update({ count: currentCount + 1 })
@@ -86,10 +129,9 @@ export async function checkRateLimit(
         .gte('window_start', windowStart.toISOString());
 
       if (updateError) {
-        console.error('[RATE-LIMIT] Erro ao incrementar contador:', updateError);
+        log.error('RATE-LIMIT', 'Erro ao incrementar contador', updateError);
       }
     } else {
-      // Insert new entry
       const { error: insertError } = await supabase
         .from('rate_limits')
         .insert({
@@ -100,7 +142,7 @@ export async function checkRateLimit(
         });
 
       if (insertError) {
-        console.error('[RATE-LIMIT] Erro ao inserir contador:', insertError);
+        log.error('RATE-LIMIT', 'Erro ao inserir contador', insertError);
       }
     }
 
@@ -110,13 +152,9 @@ export async function checkRateLimit(
       resetAt
     };
   } catch (error) {
-    console.error('[RATE-LIMIT] Erro inesperado:', error);
-    // Em caso de erro, permitir requisição (fail-open para UX)
-    return {
-      allowed: true,
-      remaining: 10,
-      resetAt: new Date()
-    };
+    log.error('RATE-LIMIT', 'Erro inesperado, usando fallback in-memory', error);
+    // Fallback seguro: usa rate limiter in-memory em vez de fail-open
+    return checkMemoryRateLimit(userId, route, limit, windowMinutes);
   }
 }
 

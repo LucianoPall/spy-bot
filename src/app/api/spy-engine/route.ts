@@ -32,10 +32,19 @@ import {
   loadUserBilling,
   uploadImageToSupabase
 } from '@/services';
+import { deductCredit } from '@/services/billing.service';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || 'dummy_key_for_build',
-});
+// Client inicializado lazily na primeira request - evita erro no build
+let _openai: OpenAI | null = null;
+function getOpenAIClient(): OpenAI {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY não configurada no servidor');
+    }
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _openai;
+}
 
 export const maxDuration = 60;
 
@@ -194,9 +203,10 @@ export async function POST(req: Request) {
 
     // ========== OPENAI VARIATIONS ==========
     logger.info(STAGES.OPENAI_CALL, 'Gerando variações');
+    const openaiClient = getOpenAIClient();
     const contextPrompt = getNichePromptContext(detectedNiche);
     const openaiResult = await generateCopyVariations(
-      openai,
+      openaiClient,
       originalCopy,
       detectedNiche,
       contextPrompt
@@ -214,7 +224,7 @@ export async function POST(req: Request) {
     // ========== DALLE IMAGES ==========
     logger.info(STAGES.DALLE_CALL, 'Gerando imagens');
     const dalleResult = await generateImagesWithDALLE(
-      openai,
+      openaiClient,
       detectedNiche,
       openaiResult.variations.variante1
     );
@@ -264,12 +274,8 @@ export async function POST(req: Request) {
 
         // Deduzir crédito apenas se sucesso e plano gratis
         if (currentPlan === 'gratis') {
-          const newCredits = Math.max(0, currentCredits - 1);
-          await supabase
-            .from('spybot_subscriptions')
-            .update({ credits: newCredits })
-            .eq('user_id', user.id);
-          currentCredits = newCredits;
+          await deductCredit(supabase, user.id, currentPlan, currentCredits);
+          currentCredits = Math.max(0, currentCredits - 1);
         }
 
         logger.success(STAGES.SUPABASE_SUCCESS, '✅ Dados salvos em DB');

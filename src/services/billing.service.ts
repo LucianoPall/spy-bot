@@ -10,6 +10,7 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { log } from '@/lib/logger';
 
 export interface UserBilling {
   userId: string;
@@ -43,7 +44,7 @@ export async function loadUserBilling(
   isAdmin: boolean
 ): Promise<UserBilling> {
   try {
-    console.log('[BILLING] Carregando info do usuário:', { userId });
+    log.info('BILLING', 'Carregando info do usuário', { userId });
 
     // Carregar ou criar subscription
     let { data: subscription, error } = await supabase
@@ -55,7 +56,7 @@ export async function loadUserBilling(
     // Se não existe, criar padrão
     if (error && error.code === 'PGRST116') {
       // Não encontrado - criar novo
-      console.log('[BILLING] Primeira requisição, criando subscription padrão');
+      log.info('BILLING', 'Primeira requisição, criando subscription padrão');
       const { data: created } = await supabase
         .from('spybot_subscriptions')
         .insert({
@@ -69,14 +70,14 @@ export async function loadUserBilling(
 
       subscription = created;
     } else if (error) {
-      console.error('[BILLING] Erro ao carregar subscription:', error);
+      log.error('BILLING', 'Erro ao carregar subscription', error);
       throw error;
     }
 
     const plan = subscription?.plan || 'gratis';
     const credits = subscription?.credits || 5;
 
-    console.log('[BILLING] ✅ Info carregada:', { plan, credits, isAdmin });
+    log.info('BILLING', 'Info carregada', { plan, credits, isAdmin });
 
     return {
       userId,
@@ -86,7 +87,7 @@ export async function loadUserBilling(
       canUseService: isAdmin || credits > 0 || plan !== 'gratis'
     };
   } catch (error) {
-    console.error('[BILLING] Erro ao carregar info:', error);
+    log.error('BILLING', 'Erro ao carregar info', error);
     throw error;
   }
 }
@@ -157,15 +158,15 @@ export async function deductCredit(
       .eq('user_id', userId);
 
     if (error) {
-      console.warn('[BILLING] Aviso ao deduzir crédito:', error);
+      log.warn('BILLING', 'Aviso ao deduzir crédito', error);
       // Continua mesmo se falhar - não bloqueia o usuário
       return true;
     }
 
-    console.log('[BILLING] ✅ Crédito deduzido:', { newCredits });
+    log.info('BILLING', 'Crédito deduzido', { newCredits });
     return true;
   } catch (error) {
-    console.error('[BILLING] Erro ao deduzir crédito:', error);
+    log.error('BILLING', 'Erro ao deduzir crédito', error);
     return true; // Fail-open: continua mesmo se erro
   }
 }

@@ -11,6 +11,7 @@
 
 import OpenAI from 'openai';
 import { getStockImageVariations } from '@/lib/stock-images';
+import { log } from '@/lib/logger';
 
 export interface DALLEGenerationResult {
   images: {
@@ -76,27 +77,35 @@ export async function generateImagesWithDALLE(
   variantCopy: string
 ): Promise<DALLEGenerationResult> {
   try {
-    console.log('[DALLE] Iniciando geração de 3 imagens:', { niche });
+    log.info('DALLE', 'Iniciando geração de 3 imagens', { niche });
 
     // Prompts customizados por nicho
     const imagePrompts = generateImagePrompts(niche, variantCopy);
 
-    // Gerar 3 imagens em paralelo com timeout individual
+    // Gerar 3 imagens em paralelo - allSettled para não perder tudo se 1 falhar
     const imageGenerations = [
       generateSingleImage(openaiClient, imagePrompts[0], '1024x1024', 'square'),
       generateSingleImage(openaiClient, imagePrompts[1], '1024x1024', 'square'),
       generateSingleImage(openaiClient, imagePrompts[2], '1024x1792', 'vertical')
     ];
 
-    const results = await Promise.all(imageGenerations);
+    const settled = await Promise.allSettled(imageGenerations);
+    const fallbackImages = await getStockImageVariations(niche, 3);
+
+    // Para cada resultado, usar a imagem gerada ou fallback
+    const urls = settled.map((result, i) => {
+      if (result.status === 'fulfilled') {
+        return result.value.url;
+      }
+      log.warn('DALLE', `Imagem ${i + 1} falhou, usando fallback`, result.reason?.message);
+      return fallbackImages[i].url;
+    });
 
     // Validar que não há duplicatas
-    const urls = results.map(r => r.url);
     const uniqueUrls = new Set(urls);
 
     if (uniqueUrls.size < 3) {
-      console.warn('[DALLE] ⚠️ Imagens duplicadas detectadas, usando fallback');
-      const fallbackImages = await getStockImageVariations(niche, 3);
+      log.warn('DALLE', 'Imagens duplicadas detectadas, usando fallback');
       return {
         images: {
           image1: fallbackImages[0].url,
@@ -107,7 +116,10 @@ export async function generateImagesWithDALLE(
       };
     }
 
-    console.log('[DALLE] ✅ 3 imagens geradas com sucesso');
+    const allSucceeded = settled.every(r => r.status === 'fulfilled');
+    if (allSucceeded) {
+      log.info('DALLE', '3 imagens geradas com sucesso');
+    }
 
     return {
       images: {
@@ -119,7 +131,7 @@ export async function generateImagesWithDALLE(
     };
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('[DALLE] ❌ Erro na geração de imagens:', errorMessage);
+    log.error('DALLE', 'Erro na geração de imagens', errorMessage);
 
     // Fallback para stock images
     const fallbackImages = await getStockImageVariations(niche, 3);

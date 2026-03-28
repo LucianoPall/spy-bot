@@ -191,6 +191,7 @@ const NICHE_KEYWORDS: Record<string, {
  * @returns NicheScores com primary, secondary e keywords encontrados
  */
 export function detectNicheWithScores(url: string = '', copy: string = ''): NicheScores {
+  const isDev = typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production';
   const textForAnalysis = `${url.toLowerCase()} ${copy.toLowerCase()}`;
 
   // Contador de matches por nicho
@@ -220,7 +221,7 @@ export function detectNicheWithScores(url: string = '', copy: string = ''): Nich
     }
   }
 
-  console.log('[NICHE-DETECTION] Raw match counts:', Object.fromEntries(
+  if (isDev) console.log('[NICHE-DETECTION] Raw match counts:', Object.fromEntries(
     Object.entries(nicheScores).map(([k, v]) => [k, v.matches])
   ));
 
@@ -269,7 +270,7 @@ export function detectNicheWithScores(url: string = '', copy: string = ''): Nich
   const [primaryNiche, primaryConfidence] = sortedNiches[0] || ['geral', 0];
   const [secondaryNiche, secondaryConfidence] = sortedNiches[1] || ['geral', 0];
 
-  console.log('[NICHE-DETECTION] Final confidences:', Object.fromEntries(
+  if (isDev) console.log('[NICHE-DETECTION] Final confidences:', Object.fromEntries(
     Object.entries(confidences).map(([k, v]) => [k, Math.round(v * 100)])
   ));
 

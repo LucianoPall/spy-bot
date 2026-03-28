@@ -10,6 +10,7 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { log } from '@/lib/logger';
 
 export interface UploadResult {
   url: string;
@@ -36,7 +37,7 @@ export async function uploadImageToSupabase(
 ): Promise<UploadResult> {
   try {
     if (!imageUrl || typeof imageUrl !== 'string') {
-      console.warn('[STORAGE] URL inválida:', imageUrl);
+      log.warn('STORAGE', 'URL inválida', imageUrl);
       return {
         url: imageUrl || 'https://images.unsplash.com/photo-1470711324350-e58093e67289?w=800',
         provider: 'fallback',
@@ -48,7 +49,7 @@ export async function uploadImageToSupabase(
     try {
       new URL(imageUrl);
     } catch {
-      console.warn('[STORAGE] URL malformada:', imageUrl);
+      log.warn('STORAGE', 'URL malformada', imageUrl);
       return {
         url: imageUrl,
         provider: 'fallback',
@@ -56,7 +57,7 @@ export async function uploadImageToSupabase(
       };
     }
 
-    console.log('[STORAGE] Iniciando upload:', { imageNumber, urlPrefix: imageUrl.substring(0, 50) });
+    log.info('STORAGE', 'Iniciando upload', { imageNumber, urlPrefix: imageUrl.substring(0, 50) });
 
     // Fazer download com retry
     let imageBlob: Blob | null = null;
@@ -77,7 +78,7 @@ export async function uploadImageToSupabase(
           break;
         }
       } catch (downloadError) {
-        console.warn(`[STORAGE] Tentativa ${attempt + 1} falhou:`, downloadError);
+        log.warn('STORAGE', `Tentativa ${attempt + 1} falhou`, downloadError);
         if (attempt < 2) {
           await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
         }
@@ -86,7 +87,7 @@ export async function uploadImageToSupabase(
 
     // Se não conseguiu download, retornar URL original
     if (!imageBlob) {
-      console.warn('[STORAGE] Falha no download, usando URL original');
+      log.warn('STORAGE', 'Falha no download, usando URL original');
       return {
         url: imageUrl,
         provider: detectImageProvider(imageUrl),
@@ -105,7 +106,7 @@ export async function uploadImageToSupabase(
       });
 
     if (uploadError) {
-      console.warn('[STORAGE] Erro no upload:', uploadError);
+      log.warn('STORAGE', 'Erro no upload', uploadError);
       return {
         url: imageUrl,
         provider: detectImageProvider(imageUrl),
@@ -120,7 +121,7 @@ export async function uploadImageToSupabase(
 
     const finalUrl = publicUrlData?.publicUrl || imageUrl;
 
-    console.log('[STORAGE] ✅ Upload bem-sucedido:', { fileName, url: finalUrl.substring(0, 60) });
+    log.info('STORAGE', 'Upload bem-sucedido', { fileName, url: finalUrl.substring(0, 60) });
 
     return {
       url: finalUrl,
@@ -128,7 +129,7 @@ export async function uploadImageToSupabase(
       isTemporary: false
     };
   } catch (error) {
-    console.error('[STORAGE] Erro crítico:', error);
+    log.error('STORAGE', 'Erro crítico', error);
 
     return {
       url: imageUrl || 'https://images.unsplash.com/photo-1470711324350-e58093e67289?w=800',

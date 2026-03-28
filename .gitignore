@@ -33,6 +33,27 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# AI-generated docs/reports (keep only README.md and ARCHITECTURE.md)
+CORRECAO_*.md
+SOLUCAO_*.md
+RESUMO_*.md
+RELATORIO_*.md
+FILTROS_*.md
+COMECE_*.txt
+LEIA_*.txt
+LEIA-*.md
+STATUS_*.md
+SUMARIO_*.md
+SUMARIO_*.txt
+FASE_*.md
+FASE_*.txt
+QUICK_REFERENCE*.md
+*_CHECKLIST.md
+*_SUMMARY.md
+*_REPORT*.md
+*_REPORT*.txt
+*.log
+
 # vercel
 .vercel
 

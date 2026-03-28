@@ -10,6 +10,7 @@
  */
 
 import OpenAI from 'openai';
+import { log } from '@/lib/logger';
 
 export interface OpenAIGenerationResult {
   variations: {
@@ -44,7 +45,7 @@ export async function generateCopyVariations(
   contextPrompt: string = ''
 ): Promise<OpenAIGenerationResult> {
   try {
-    console.log('[OPENAI] Iniciando geração de variações:', { niche, copyLength: originalCopy.length });
+    log.info('OPENAI', 'Iniciando geração de variações', { niche, copyLength: originalCopy.length });
 
     // Construir prompt
     const systemPrompt = `Você é um expert em copywriting para ${niche}.
@@ -101,7 +102,7 @@ Retorne um JSON com exatamente esta estrutura:
 
     const parsed = JSON.parse(responseText);
 
-    console.log('[OPENAI] ✅ Variações geradas com sucesso');
+    log.info('OPENAI', 'Variações geradas com sucesso');
 
     return {
       variations: {
@@ -120,7 +121,7 @@ Retorne um JSON com exatamente esta estrutura:
     };
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('[OPENAI] ❌ Erro na geração:', errorMessage);
+    log.error('OPENAI', 'Erro na geração', errorMessage);
 
     return {
       variations: {
