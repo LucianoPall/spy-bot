@@ -64,7 +64,7 @@ export interface APIResponse<T = unknown> {
 /**
  * Props genéricos para componentes
  */
-export type ComponentProps<T extends Record<string, unknown> = {}> = T & {
+export type ComponentProps<T extends Record<string, unknown> = Record<string, never>> = T & {
   className?: string;
   children?: React.ReactNode;
 };

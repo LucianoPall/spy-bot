@@ -99,7 +99,7 @@ export async function POST(request: Request) {
         ]);
 
         // Atualizar no banco apenas se conseguiu fazer upload
-        const updateData: any = {};
+        const updateData: Record<string, string> = {};
         if (newImage1) updateData.image1 = newImage1;
         if (newImage2) updateData.image2 = newImage2;
         if (newImage3) updateData.image3 = newImage3;

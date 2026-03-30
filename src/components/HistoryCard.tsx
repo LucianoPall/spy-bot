@@ -137,7 +137,11 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
             if (!imageUrl || failedImages.has(imageKey)) return;
 
             const startTime = performance.now();
-            const imageLog: any = {
+            const imageLog: {
+                imageKey: string;
+                url: string;
+                attempts: Record<string, { status: string; duration?: number; error?: string; [k: string]: unknown } | null>;
+            } = {
                 imageKey,
                 url: imageUrl.substring(0, 100) + (imageUrl.length > 100 ? '...' : ''),
                 attempts: {
@@ -283,7 +287,7 @@ export default function HistoryCard({ clone }: { clone: Clone }) {
 
         // Validar estrutura do clone antes de processar
         if (!validateCloneStructure(clone)) {
-            console.error('[INVALID_CLONE_STRUCTURE]', { cloneId: (clone as any)?.id });
+            console.error('[INVALID_CLONE_STRUCTURE]', { cloneId: (clone as Record<string, unknown>)?.id });
             return;
         }
 

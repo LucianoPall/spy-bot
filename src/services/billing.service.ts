@@ -47,11 +47,13 @@ export async function loadUserBilling(
     log.info('BILLING', 'Carregando info do usuário', { userId });
 
     // Carregar ou criar subscription
-    let { data: subscription, error } = await supabase
+    const result = await supabase
       .from('spybot_subscriptions')
       .select('*')
       .eq('user_id', userId)
       .single();
+    let subscription = result.data;
+    const error = result.error;
 
     // Se não existe, criar padrão
     if (error && error.code === 'PGRST116') {

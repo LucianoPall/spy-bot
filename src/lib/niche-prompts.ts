@@ -370,7 +370,7 @@ export function getNicheStructureTemplate(niche: string): {
   solution: string;
   proof: string;
 } {
-  const templates: Record<string, any> = {
+  const templates: Record<string, { hook: string; agitation: string; solution: string; proof: string }> = {
     emagrecimento: {
       hook: 'Questionar identidade atual ou evocar dor (espelho, fotos)',
       agitation: 'Amplificar custo emocional/social (praia, encontro, aceitação)',

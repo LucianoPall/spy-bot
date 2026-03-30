@@ -78,8 +78,8 @@ export async function GET(req: Request) {
         console.error('[proxy-image] ❌ ERRO:', {
             message: err.message,
             url: imageUrl?.substring(0, 80) + '...',
-            code: (err as any).code,
-            statusCode: (err as any).statusCode
+            code: (err as Error & { code?: string }).code,
+            statusCode: (err as Error & { statusCode?: number }).statusCode
         });
 
         // ✅ NUNCA retornar JSON - tentar fallback automático inteligente

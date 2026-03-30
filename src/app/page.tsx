@@ -235,7 +235,7 @@ export default function Home() {
                   </span>
                 ))}
               </div>
-              <p className="text-slate-300 mb-6 italic">"{test.text}"</p>
+              <p className="text-slate-300 mb-6 italic">&ldquo;{test.text}&rdquo;</p>
               <div className="border-t border-slate-700 pt-4">
                 <p className="font-semibold">{test.name}</p>
                 <p className="text-sm text-slate-400">

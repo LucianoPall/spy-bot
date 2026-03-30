@@ -16,15 +16,19 @@ export default function ActiveProfileBanner() {
   const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
-    setIsHydrated(true);
+    let parsed: BrandProfile | null = null;
     try {
       const stored = localStorage.getItem("spybot_brand_profile");
       if (stored) {
-         
-        setProfile(JSON.parse(stored));
+        parsed = JSON.parse(stored);
       }
     } catch (e) {
       console.error("Failed to parse profile", e);
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- needed for hydration pattern with localStorage
+    setIsHydrated(true);
+    if (parsed) {
+      setProfile(parsed);
     }
   }, []);
 

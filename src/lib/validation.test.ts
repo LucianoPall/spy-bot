@@ -123,6 +123,7 @@ describe('validateInputString', () => {
   });
 
   it('deve rejeitar valor não-string', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = validateInputString(123 as any, 'Numero');
     expect(result.valid).toBe(false);
     expect(result.error).toContain('texto');

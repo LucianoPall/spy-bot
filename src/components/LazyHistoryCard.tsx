@@ -7,7 +7,7 @@ interface Clone {
     id: string;
     niche?: string;
     created_at: string;
-    [key: string]: any;
+    [key: string]: unknown;
 }
 
 function LazyHistoryCard({ clone }: { clone: Clone }) {

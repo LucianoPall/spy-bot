@@ -8,7 +8,7 @@ import { ensureError } from '@/lib/types-common';
  */
 interface TestResult {
   status: 'testing...' | 'ok' | 'error' | 'warning';
-  details?: Record<string, any> | string | null;
+  details?: Record<string, unknown> | string | null;
   error?: string | null;
 }
 

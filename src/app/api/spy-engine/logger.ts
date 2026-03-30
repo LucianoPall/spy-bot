@@ -94,8 +94,8 @@ class Logger {
     const errorData = {
       message: errorObject.message || String(error),
       stack: errorObject.stack,
-      code: (error as any)?.code,
-      status: (error as any)?.status
+      code: (error as Error & { code?: string })?.code,
+      status: (error as Error & { status?: number })?.status
     };
 
     const entry: LogEntry = {

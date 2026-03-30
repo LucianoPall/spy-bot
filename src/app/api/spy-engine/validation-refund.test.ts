@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * TESTES UNITÁRIOS - Validação de URL Facebook + Refund
  *
@@ -149,7 +150,7 @@ describe('validateFacebookAdUrl - Validação de URLs Facebook', () => {
 
 vi.mock('@/utils/supabase/server', () => {
     const createMockClient = () => ({
-        from: vi.fn((table) => ({
+        from: vi.fn((_table) => ({
             select: vi.fn(function() {
                 return {
                     eq: vi.fn((column, value) => ({

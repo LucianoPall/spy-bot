@@ -168,7 +168,7 @@ async function generateSingleImage(
       size,
       quality: 'standard',
       n: 1,
-      //@ts-ignore - signal não está tipado no SDK
+      // @ts-expect-error - signal não está tipado no SDK
       signal: controller.signal
     });
 
