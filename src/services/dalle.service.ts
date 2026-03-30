@@ -28,39 +28,44 @@ export interface DALLEGenerationResult {
  */
 function generateImagePrompts(niche: string, variantCopy: string): string[] {
   const nichePrompts: Record<string, string[]> = {
-    'Emagrecimento': [
+    'emagrecimento': [
       `Professional fitness transformation image - before and after visual showing dramatic weight loss progress, fit body, health focus, motivational, realistic photography, high quality, bright lighting`,
       `Healthy lifestyle image - person exercising on beach, energetic, fit, vibrant colors, summer vibes, motivation, professional photography`,
       `Weight loss success portrait - happy smiling person showing their fitness achievement, confident expression, healthy glow, modern aesthetic`
     ],
-    'Renda Extra': [
+    'renda_extra': [
       `Professional working from home setup - person on laptop, coffee, modern workspace, productivity, success indicators, bright modern office`,
       `Digital entrepreneur image - successful person at desk, multiple screens, business growth charts, wealth building, professional atmosphere`,
       `Passive income concept - cash flow diagram, money management, financial growth, professional business illustration, modern design`
     ],
-    'iGaming': [
+    'igaming': [
       `Exciting gaming interface screenshot - colorful slots, cards, gaming platform design, dynamic, engaging, professional casino aesthetic`,
       `Winning moment - celebration image related to gaming, excitement, victory, bright colors, energetic mood, modern digital art`,
       `Gaming platform dashboard - clean, professional, user-friendly interface with gaming elements, modern UI design, attractive layout`
     ],
-    'Estética': [
+    'estetica': [
       `Professional skincare facial treatment - before and after beauty transformation, glowing skin, spa aesthetic, luxury feel, professional lighting`,
       `Beauty product showcase - elegant cosmetics display, professional skincare routine, fresh glowing skin, modern minimalist aesthetic`,
       `Facial rejuvenation concept - anti-aging transformation, youthful skin glow, luxury beauty brand aesthetic, professional photography`
     ],
-    'E-commerce': [
+    'ecommerce': [
       `Professional product display - elegant shopping scene, attractive merchandise, modern retail environment, customer shopping, bright lighting`,
       `Online store hero image - diverse products showcasing, shopping bag, e-commerce vibes, modern marketplace aesthetic, professional photography`,
       `Successful shopping experience - happy customer with products, delivery box, satisfaction, convenient shopping, modern e-commerce aesthetic`
     ],
-    'Geral': [
+    'alimentacao': [
+      `Professional healthy food photography - fresh organic ingredients, colorful meal prep, restaurant quality presentation, appetizing composition`,
+      `Gourmet food delivery concept - beautifully plated meal, food packaging, fresh ingredients, warm lighting, professional food photography`,
+      `Nutrition and wellness image - balanced diet showcase, superfoods, healthy eating lifestyle, vibrant colors, clean aesthetic`
+    ],
+    'geral': [
       `Professional business success image - growth chart, productivity, modern corporate environment, professional atmosphere, bright modern design`,
       `Digital marketing concept - professional person with technology, growth metrics, business growth, modern aesthetic, professional photography`,
       `Success and achievement visual - motivational image, professional success, modern business, bright colors, inspiring composition`
     ]
   };
 
-  return nichePrompts[niche] || nichePrompts['Geral'];
+  return nichePrompts[niche] || nichePrompts['geral'];
 }
 
 /**
