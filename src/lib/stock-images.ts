@@ -13,14 +13,16 @@ interface StockImage {
   author: string;
 }
 
-// Mapeamento de nichos para queries do Unsplash
+// Mapeamento EXPANDIDO de nichos para queries do Unsplash
+// Mais queries = mais variedade de imagens dinâmicas
 const NICHE_QUERIES: Record<string, string[]> = {
-  igaming: ['casino', 'poker', 'gaming', 'slots', 'betting'],
-  emagrecimento: ['weight loss', 'fitness', 'diet', 'slim', 'healthy lifestyle'],
-  estetica: ['beauty', 'skincare', 'facial', 'cosmetics', 'anti-aging'],
-  geral: ['marketing', 'business', 'success', 'professional', 'digital'],
-  renda_extra: ['online business', 'work from home', 'income', 'entrepreneur', 'digital marketing'],
-  ecommerce: ['shopping', 'e-commerce', 'store', 'products', 'retail'],
+  igaming: ['casino gaming', 'poker game', 'slot machine', 'online betting', 'card game', 'gaming excitement', 'winning moment'],
+  emagrecimento: ['weight loss transformation', 'fitness workout', 'healthy diet food', 'slim body', 'healthy lifestyle', 'gym exercise', 'weight success'],
+  estetica: ['beauty skincare', 'facial treatment', 'cosmetics makeup', 'anti-aging skin', 'spa beauty', 'skincare routine', 'beauty product'],
+  geral: ['business marketing', 'success professional', 'digital growth', 'entrepreneurship', 'business success', 'professional team', 'growth chart'],
+  renda_extra: ['work from home', 'online business', 'passive income', 'digital entrepreneur', 'freelance work', 'online earnings', 'startup success'],
+  ecommerce: ['online shopping', 'e-commerce store', 'product display', 'retail store', 'shopping cart', 'delivery box', 'customer shopping'],
+  alimentacao: ['healthy food', 'gourmet meal', 'nutrition diet', 'food delivery', 'restaurant food', 'organic ingredients', 'food preparation']
 };
 
 // Fallback interno: imagens padrão se Unsplash falhar
@@ -130,12 +132,12 @@ const FALLBACK_STOCK_IMAGES: Record<string, StockImage[]> = {
 };
 
 /**
- * Busca imagens diferentes do Unsplash baseado no nicho
- * Com fallback automático para imagens pré-configuradas
+ * Busca imagens DIFERENTES do Unsplash baseado no nicho
+ * Com variação dinâmica e fallback automático para imagens pré-configuradas
  *
  * @param niche - Nicho do anúncio (igaming, emagrecimento, estética, geral, renda_extra, ecommerce)
  * @param count - Número de imagens a retornar (padrão: 3)
- * @returns Array com URLs de imagens diferentes
+ * @returns Array com URLs de imagens DIFERENTES e variadas
  */
 export async function getStockImageVariations(
   niche: string = 'geral',
@@ -153,23 +155,34 @@ export async function getStockImageVariations(
     // Obter queries para o nicho
     const queries = NICHE_QUERIES[niche] || NICHE_QUERIES['geral'];
 
+    // Selecionar queries diferentes (ao invés de sempre as 3 primeiras)
+    // Isto garante variedade mesmo se chamado múltiplas vezes
+    const selectedQueries = selectRandomQueries(queries, Math.min(count, queries.length));
+
+    console.log(`[STOCK-IMAGES] 🔍 Buscando ${count} imagens dinâmicas para nicho: ${niche}`, {
+      queries: selectedQueries
+    });
+
     // Fazer requisições em paralelo para diferentes queries
-    const promises = queries.slice(0, count).map((query) =>
+    const promises = selectedQueries.map((query) =>
       fetchUnsplashImage(apiKey, query)
     );
 
-    const results = await Promise.all(promises);
-    const successResults = results.filter((r) => r !== null) as StockImage[];
+    const results = await Promise.allSettled(promises);
+    const successResults = results
+      .filter((r) => r.status === 'fulfilled' && r.value !== null)
+      .map((r) => (r as PromiseFulfilledResult<StockImage | null>).value as StockImage);
 
-    // Se conseguiu pelo menos 1 imagem, retornar (pode ser menos que count)
+    // Se conseguiu pelo menos 1 imagem, retornar
     if (successResults.length > 0) {
       console.log(
-        `[STOCK-IMAGES] ✅ Obtidas ${successResults.length} imagens do Unsplash para nicho: ${niche}`
+        `[STOCK-IMAGES] ✅ Obtidas ${successResults.length}/${count} imagens dinâmicas do Unsplash para nicho: ${niche}`
       );
 
       // Se não conseguiu o count completo, completar com fallback
       if (successResults.length < count) {
         const fallbackRemaining = getFallbackImages(niche, count - successResults.length);
+        console.log(`[STOCK-IMAGES] ℹ️ Completadas ${count - successResults.length} imagens com fallback`);
         return successResults.concat(fallbackRemaining);
       }
 
@@ -186,52 +199,110 @@ export async function getStockImageVariations(
 }
 
 /**
- * Busca uma imagem única do Unsplash
+ * Seleciona queries aleatórias para garantir variedade de imagens
+ * @internal
+ */
+function selectRandomQueries(queries: string[], count: number): string[] {
+  if (queries.length <= count) {
+    return queries;
+  }
+
+  // Selecionar `count` queries aleatórias sem repetição
+  const shuffled = [...queries].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}
+
+/**
+ * Busca uma imagem única do Unsplash com retry e timeout
  * @internal
  */
 async function fetchUnsplashImage(
   apiKey: string,
   query: string
 ): Promise<StockImage | null> {
-  try {
-    const url = `https://api.unsplash.com/photos/random?query=${encodeURIComponent(query)}&client_id=${apiKey}&w=1024`;
+  const maxRetries = 2;
+  let lastError: Error | null = null;
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Accept-Version': 'v1',
-      },
-    });
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const url = `https://api.unsplash.com/photos/random?query=${encodeURIComponent(query)}&client_id=${apiKey}&w=1024`;
 
-    if (!response.ok) {
-      console.warn(`[STOCK-IMAGES] Status ${response.status} ao buscar Unsplash para: ${query}`);
-      return null;
+      // Timeout de 10 segundos para requisição Unsplash
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Accept-Version': 'v1',
+          },
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const statusError = `Status ${response.status}`;
+          lastError = new Error(statusError);
+
+          if (response.status === 429) {
+            // Rate limit - não tentar novamente
+            console.warn(`[STOCK-IMAGES] Rate limit (429) ao buscar: ${query}`);
+            return null;
+          }
+
+          if (attempt < maxRetries) {
+            console.warn(`[STOCK-IMAGES] ${statusError} ao buscar "${query}", tentativa ${attempt}/${maxRetries}`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+            continue;
+          }
+
+          console.warn(`[STOCK-IMAGES] Falha após ${maxRetries} tentativas para: ${query}`);
+          return null;
+        }
+
+        const data = (await response.json()) as {
+          urls?: { regular?: string };
+          description?: string;
+          alt_description?: string;
+          user?: { name?: string };
+        };
+
+        if (!data.urls?.regular) {
+          console.warn(`[STOCK-IMAGES] Resposta inválida do Unsplash para: ${query}`);
+          return null;
+        }
+
+        // Formatar URL para tamanho 1024x1024
+        const imageUrl = `${data.urls.regular}&w=1024&h=1024&fit=crop`;
+
+        return {
+          url: imageUrl,
+          title: data.description || data.alt_description || query,
+          author: data.user?.name || 'Unsplash',
+        };
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        lastError = fetchError instanceof Error ? fetchError : new Error(String(fetchError));
+
+        if (lastError.name === 'AbortError') {
+          console.warn(`[STOCK-IMAGES] Timeout ao buscar "${query}", tentativa ${attempt}/${maxRetries}`);
+        } else {
+          console.error(`[STOCK-IMAGES] Erro ao buscar "${query}":`, lastError.message);
+        }
+
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.error(`[STOCK-IMAGES] Erro geral ao buscar "${query}":`, lastError.message);
     }
-
-    const data = (await response.json()) as {
-      urls?: { regular?: string };
-      description?: string;
-      alt_description?: string;
-      user?: { name?: string };
-    };
-
-    if (!data.urls?.regular) {
-      console.warn(`[STOCK-IMAGES] Resposta inválida do Unsplash para: ${query}`);
-      return null;
-    }
-
-    // Formatar URL para tamanho 1024x1024
-    const imageUrl = `${data.urls.regular}&w=1024&h=1024&fit=crop`;
-
-    return {
-      url: imageUrl,
-      title: data.description || data.alt_description || query,
-      author: data.user?.name || 'Unsplash',
-    };
-  } catch (error) {
-    console.error(`[STOCK-IMAGES] Erro ao buscar imagem para "${query}":`, error);
-    return null;
   }
+
+  return null;
 }
 
 /**

@@ -14,7 +14,7 @@ import { log } from '@/lib/logger';
 
 export interface UserBilling {
   userId: string;
-  plan: 'gratis' | 'pro' | 'premium';
+  plan: 'gratis' | 'trial' | 'pro' | 'premium';
   credits: number;
   isAdmin: boolean;
   canUseService: boolean;
@@ -81,12 +81,15 @@ export async function loadUserBilling(
 
     log.info('BILLING', 'Info carregada', { plan, credits, isAdmin });
 
+    // Pro/Premium = ilimitado (R$99/mês), Trial = 25 créditos (R$47), Gratis = 5 créditos
+    const isUnlimited = plan === 'pro' || plan === 'premium';
+
     return {
       userId,
-      plan: plan as 'gratis' | 'pro' | 'premium',
+      plan: plan as 'gratis' | 'trial' | 'pro' | 'premium',
       credits,
       isAdmin,
-      canUseService: isAdmin || credits > 0 || plan !== 'gratis'
+      canUseService: isAdmin || isUnlimited || credits > 0
     };
   } catch (error) {
     log.error('BILLING', 'Erro ao carregar info', error);
@@ -110,8 +113,8 @@ export function validateBillingAccess(
     };
   }
 
-  // Plano pago sempre pode
-  if (billing.plan !== 'gratis') {
+  // Pro/Premium = ilimitado (R$99/mês)
+  if (billing.plan === 'pro' || billing.plan === 'premium') {
     return {
       allowed: true,
       currentPlan: billing.plan,
@@ -119,7 +122,7 @@ export function validateBillingAccess(
     };
   }
 
-  // Grátis: precisa de créditos OU ter BYOK
+  // Trial (R$47) ou Gratis: precisa de créditos OU ter BYOK
   if (billing.credits > 0 || hasBYOK) {
     return {
       allowed: true,
@@ -128,10 +131,14 @@ export function validateBillingAccess(
     };
   }
 
-  // Bloquear
+  // Bloquear - direciona para upgrade
+  const reason = billing.plan === 'trial'
+    ? 'Seus 25 créditos do plano Starter acabaram. Assine o Pro por R$ 99/mês para uso ilimitado.'
+    : 'Você atingiu o limite de requisições grátis. Comece com o Starter (R$ 47) ou assine o Pro (R$ 99/mês).';
+
   return {
     allowed: false,
-    reason: 'Você atingiu o limite de requisições grátis. Atualize para Pro ou adicione sua chave OpenAI.',
+    reason,
     currentPlan: billing.plan,
     currentCredits: billing.credits
   };
@@ -146,10 +153,12 @@ export async function deductCredit(
   plan: string,
   currentCredits: number
 ): Promise<boolean> {
-  // Apenas deduz em plano grátis
-  if (plan !== 'gratis') {
+  // Pro/Premium = ilimitado, não deduz
+  if (plan === 'pro' || plan === 'premium') {
     return true;
   }
+
+  // Trial e Gratis deduzem créditos
 
   try {
     const newCredits = Math.max(0, currentCredits - 1);

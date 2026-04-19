@@ -33,6 +33,10 @@ export async function GET() {
       credits,
       totalClones: clones,
       niche: 'Não configurado',
+    }, {
+      headers: {
+        'Cache-Control': 'private, max-age=60, stale-while-revalidate=120'
+      }
     });
   } catch (error) {
     console.error('Error fetching KPI data:', error);

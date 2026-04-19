@@ -175,7 +175,7 @@ const NICHE_KEYWORDS: Record<string, {
       'serviço', 'empresa', 'negócio', 'solução',
       'service', 'solution', 'business'
     ],
-    weight: 0.2 // Peso MUITO baixo — fallback apenas
+    weight: 0.1 // Peso MÍNIMO — fallback apenas quando nenhum outro nicho > 0.15
   }
 };
 
@@ -225,23 +225,32 @@ export function detectNicheWithScores(url: string = '', copy: string = ''): Nich
     Object.entries(nicheScores).map(([k, v]) => [k, v.matches])
   ));
 
-  // NOVA LÓGICA: Nicho com blockedBy não pode ganhar se seu bloqueador tem matches
+  // NOVA LÓGICA: Nicho com blockedBy é penalizado (não zerado) se seu bloqueador tem SIGNIFICATIVAMENTE mais matches
   const blockedNiches: string[] = [];
+  const penalizedNiches: string[] = [];
   for (const [niche, config] of Object.entries(NICHE_KEYWORDS)) {
     if (!config.blockedBy || nicheScores[niche].matches === 0) continue;
 
-    // Este nicho tem matches
+    const targetMatches = nicheScores[niche].matches;
     for (const blockerNiche of config.blockedBy) {
-      // Se o nicho bloqueador TAMBÉM tem matches, bloquear este nicho
-      if (nicheMatches[blockerNiche]) {
+      if (!nicheMatches[blockerNiche]) continue;
+      const blockerMatches = nicheScores[blockerNiche].matches;
+
+      // Só bloqueia se o bloqueador tem pelo menos 1.5x mais matches
+      if (blockerMatches > targetMatches * 1.5) {
         blockedNiches.push(niche);
-        console.log(`[NICHE-DETECTION] ⚠️ Nicho "${niche}" bloqueado porque "${blockerNiche}" também tem matches`);
-        break; // Já foi adicionado, sair do loop
+        console.log(`[NICHE-DETECTION] Nicho "${niche}" bloqueado porque "${blockerNiche}" tem ${blockerMatches} vs ${targetMatches} matches (>1.5x)`);
+        break;
+      } else if (nicheMatches[blockerNiche]) {
+        // Bloqueador tem matches mas não o suficiente para zerar — apenas penalizar 30%
+        penalizedNiches.push(niche);
+        console.log(`[NICHE-DETECTION] Nicho "${niche}" penalizado em 30% porque "${blockerNiche}" também tem matches`);
+        break;
       }
     }
   }
 
-  // Calcular confiança — APENAS para nichos não bloqueados
+  // Calcular confiança — nichos bloqueados = 0, penalizados = -30%
   const confidences: Record<string, number> = {};
   const maxMatches = Math.max(...Object.values(nicheScores).map(s => s.matches), 1);
 
@@ -260,7 +269,14 @@ export function detectNicheWithScores(url: string = '', copy: string = ''): Nich
 
     // Fórmula: (matches / maxMatches) * weight, clampado a 1.0
     const weight = NICHE_KEYWORDS[niche]?.weight || 1.0;
-    confidences[niche] = Math.min(1.0, (matches / maxMatches) * weight);
+    let confidence = Math.min(1.0, (matches / maxMatches) * weight);
+
+    // Penalizar nichos que têm bloqueador com matches (mas não o suficiente para zerar)
+    if (penalizedNiches.includes(niche)) {
+      confidence *= 0.7; // Reduz 30%
+    }
+
+    confidences[niche] = confidence;
   }
 
   // Ordenar nichos por confiança DECRESCENTE
@@ -283,9 +299,27 @@ export function detectNicheWithScores(url: string = '', copy: string = ''): Nich
   let finalPrimary = primaryNiche;
   let finalPrimaryConfidence = primaryConfidence;
 
-  if (primaryNiche === 'geral' && primaryConfidence < 0.3 && secondaryConfidence > 0.3) {
-    finalPrimary = secondaryNiche;
-    finalPrimaryConfidence = secondaryConfidence;
+  if (primaryNiche === 'geral') {
+    // "geral" só ganha se NENHUM outro nicho tem confiança > 0.15
+    const anyOtherNiche = sortedNiches.find(([n, c]) => n !== 'geral' && c > 0.15);
+    if (anyOtherNiche) {
+      finalPrimary = anyOtherNiche[0];
+      finalPrimaryConfidence = anyOtherNiche[1];
+    }
+    // Fallback legado: se secondary > 0.3 e primary < 0.3
+    else if (primaryConfidence < 0.3 && secondaryConfidence > 0.3) {
+      finalPrimary = secondaryNiche;
+      finalPrimaryConfidence = secondaryConfidence;
+    }
+  }
+
+  // Se resultado final é "geral", checar se QUALQUER nicho tem confiança > 0.2
+  if (finalPrimary === 'geral') {
+    const betterNiche = sortedNiches.find(([n, c]) => n !== 'geral' && c > 0.2);
+    if (betterNiche) {
+      finalPrimary = betterNiche[0];
+      finalPrimaryConfidence = betterNiche[1];
+    }
   }
 
   // Se tudo falhou (todos nichos têm 0), retornar "geral" com confiança baixa
@@ -376,14 +410,14 @@ export function getNicheConfidencePercentage(scores: NicheScores): number {
 export function getNicheDisplayName(niche: string): string {
   const names: Record<string, string> = {
     emagrecimento: 'Emagrecimento',
-    estetica: 'Estética',
+    estetica: 'Estética & Beleza',
     alimentacao: 'Alimentação',
-    igaming: 'iGaming',
+    igaming: 'iGaming & Apostas',
     ecommerce: 'E-commerce',
     renda_extra: 'Renda Extra',
-    geral: 'Geral'
+    geral: 'Marketing Digital'
   };
-  return names[niche] || 'Desconhecido';
+  return names[niche] || niche.charAt(0).toUpperCase() + niche.slice(1);
 }
 
 /**

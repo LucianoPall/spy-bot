@@ -70,7 +70,7 @@ export default function SignupPage() {
                 <div className="w-full max-w-md">
                     <div className="mb-10">
                         <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-green-400 to-emerald-600">
-                            Spy Bot
+                            AdClone
                         </h1>
                         <h2 className="text-2xl font-semibold mt-4">Criar Conta</h2>
                         <p className="text-gray-400 mt-2">
@@ -144,7 +144,7 @@ export default function SignupPage() {
                     <div className="w-24 h-24 bg-gradient-to-br from-green-400 to-emerald-600 rounded-2xl mx-auto mb-8 flex items-center justify-center shadow-[0_0_50px_rgba(52,211,153,0.3)]">
                         <Lock className="w-12 h-12 text-black" />
                     </div>
-                    <h2 className="text-3xl font-bold mb-4">Bem-vindo ao Spy Bot</h2>
+                    <h2 className="text-3xl font-bold mb-4">Bem-vindo ao AdClone</h2>
                     <p className="text-gray-400 text-lg">
                         Junte-se à comunidade de empreendedores que estão clonando campanhas milionárias em segundos.
                     </p>

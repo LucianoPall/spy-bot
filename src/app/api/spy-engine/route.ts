@@ -24,7 +24,7 @@ import { detectNicheWithScores, getNicheConfidencePercentage } from '@/lib/niche
 import { getNichePromptContext } from '@/lib/niche-prompts';
 import { refundOnApifyFailure, refundOnOpenAIFailure } from './validation-refund';
 import { checkRateLimit, getLimitForRoute } from '@/lib/rate-limiter';
-import { validateFacebookAdUrl } from '@/lib/validation';
+import { validateFacebookAdUrl, validateApifyCompatibility } from '@/lib/validation';
 import {
   extractAdWithApify,
   generateCopyVariations,
@@ -80,7 +80,7 @@ export async function POST(req: Request) {
   logger.startTimer('TOTAL_REQUEST');
 
   try {
-    const { adUrl, brandProfile, manualCopy, manualImage, isManualInput } = await req.json();
+    const { adUrl, brandProfile, manualCopy, manualImage, isManualInput, userProvidedNiche } = await req.json();
     const usingManualInput = isManualInput && manualCopy;
 
     // Get user for context
@@ -103,8 +103,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'URL do anúncio não fornecida.' }, { status: 400 });
     }
 
-    // Validar URL do Facebook (proteção contra DoS e injeção)
-    if (adUrl) {
+    // Validar URL do Facebook apenas quando NÃO for input manual
+    if (adUrl && !usingManualInput) {
       const urlValidation = validateFacebookAdUrl(adUrl);
       if (!urlValidation.valid) {
         logger.error(STAGES.VALIDATION, 'URL inválida', { error: urlValidation.error });
@@ -112,6 +112,15 @@ export async function POST(req: Request) {
           { error: `URL inválida: ${urlValidation.error}` },
           { status: 400 }
         );
+      }
+
+      // Validar compatibilidade com Apify (apenas aviso, não bloqueia)
+      const apifyCompat = validateApifyCompatibility(adUrl);
+      if (apifyCompat.warning) {
+        logger.warn(STAGES.VALIDATION, `⚠️ ${apifyCompat.warning}`);
+        if (apifyCompat.recommendation) {
+          logger.info(STAGES.VALIDATION, `💡 ${apifyCompat.recommendation}`);
+        }
       }
     }
 
@@ -182,8 +191,8 @@ export async function POST(req: Request) {
           await refundOnApifyFailure(user.id, apifyErrorMessage);
         }
 
-        // Fallback
-        const mockData = getMockAdData(adUrl, detectedNiche);
+        // Fallback com suporte para nicho fornecido pelo usuário
+        const mockData = getMockAdData(adUrl, userProvidedNiche || detectedNiche);
         originalCopy = mockData.copy;
         adImageUrl = mockData.image;
         logger.warn(STAGES.FALLBACK, '⚠️ Usando mock data');
@@ -194,11 +203,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // Fallback se ainda vazio
-    if (!originalCopy || !adImageUrl) {
+    // Fallback apenas para copy (imagem original será gerada com DALL-E se vazia)
+    if (!originalCopy) {
       const mockData = getMockAdData(adUrl, detectedNiche);
-      if (!originalCopy) originalCopy = mockData.copy;
-      if (!adImageUrl) adImageUrl = mockData.image;
+      originalCopy = mockData.copy;
     }
 
     // ========== OPENAI VARIATIONS ==========
@@ -220,6 +228,49 @@ export async function POST(req: Request) {
     }
 
     logger.success(STAGES.OPENAI_SUCCESS, '✅ Variações geradas');
+
+    // ========== ORIGINAL IMAGE GENERATION ==========
+    // Quando não há imagem original (ex: modo manual sem URL), gera uma com DALL-E
+    // baseada no copy original — fica no lugar da imagem do anúncio real
+    if (!adImageUrl) {
+      logger.info(STAGES.DALLE_CALL, '🎨 Sem imagem original — gerando com DALL-E baseado no copy');
+      try {
+        const originalPrompt = `Professional social media advertisement image for the following offer: "${originalCopy.substring(0, 300)}". Clean, modern, high quality photography, suitable for Facebook/Instagram ads. No text overlays.`;
+
+        const timeoutMs = 70000;
+        const dallePromise = openaiClient.images.generate({
+          model: 'dall-e-3',
+          prompt: originalPrompt,
+          size: '1024x1024',
+          quality: 'standard',
+          n: 1
+        });
+
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout ao gerar imagem original')), timeoutMs)
+        );
+
+        const originalImageResponse = await Promise.race([dallePromise, timeoutPromise]);
+        const generatedUrl = originalImageResponse.data?.[0]?.url;
+
+        if (generatedUrl) {
+          if (user) {
+            const uploadResult = await uploadImageToSupabase(generatedUrl, supabase, user.id, 0);
+            adImageUrl = uploadResult.url;
+          } else {
+            adImageUrl = generatedUrl;
+          }
+          logger.success(STAGES.DALLE_SUCCESS, '✅ Imagem original gerada com DALL-E');
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.warn(STAGES.DALLE_CALL, `⚠️ Falha ao gerar imagem original (${errMsg}) — usando stock image`);
+        // Fallback: usa imagem stock do Unsplash se DALL-E falhar
+        const { getStockImageVariations } = await import('@/lib/stock-images');
+        const fallback = await getStockImageVariations(detectedNiche, 1);
+        adImageUrl = fallback[0]?.url || '';
+      }
+    }
 
     // ========== DALLE IMAGES ==========
     logger.info(STAGES.DALLE_CALL, 'Gerando imagens');
@@ -245,6 +296,23 @@ export async function POST(req: Request) {
           uploadImageToSupabase(dalleResult.images.image3, supabase, user.id, 3)
         ]);
 
+        // Retry para imagens que falharam no upload (ainda com URL temporária)
+        const imageKeys = ['image1', 'image2', 'image3'] as const;
+        for (let i = 0; i < results.length; i++) {
+          if (!results[i].uploaded && results[i].isTemporary) {
+            logger.warn(STAGES.STORAGE_FAIL, `⚠️ Imagem ${i + 1} falhou no upload, retentando...`);
+            try {
+              const retryResult = await uploadImageToSupabase(
+                dalleResult.images[imageKeys[i]],
+                supabase, user.id, i + 1
+              );
+              if (retryResult.uploaded) {
+                results[i] = retryResult;
+              }
+            } catch { /* manter resultado original */ }
+          }
+        }
+
         uploadedImage1 = results[0].url;
         uploadedImage2 = results[1].url;
         uploadedImage3 = results[2].url;
@@ -259,8 +327,9 @@ export async function POST(req: Request) {
       try {
         await supabase.from('spybot_generations').insert({
           user_id: user.id,
-          original_ad_copy: originalCopy,
-          original_ad_image: adImageUrl,
+          original_copy: originalCopy,
+          original_image: adImageUrl,
+          original_url: adUrl || null,
           variante1: openaiResult.variations.variante1,
           variante2: openaiResult.variations.variante2,
           variante3: openaiResult.variations.variante3,

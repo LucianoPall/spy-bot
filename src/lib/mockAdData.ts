@@ -146,14 +146,16 @@ function getRandomItem<T>(array: T[]): T {
  *
  * @param adUrl - URL do anúncio para detectar nicho (opcional)
  * @param forcedNiche - Força um nicho específico em vez de detectar
+ * @param userProvidedNiche - Nicho fornecido pelo usuário (tem prioridade máxima)
  * @returns Mock data realista para o anúncio
  */
 export function getMockAdData(
   adUrl?: string,
-  forcedNiche?: string
+  forcedNiche?: string,
+  userProvidedNiche?: string
 ): MockAdDataResult {
-  // 1. Determinar qual nicho usar
-  const detectedNiche = forcedNiche || (adUrl ? detectNicheFromUrl(adUrl) : "geral");
+  // 1. Determinar qual nicho usar (ordem de prioridade: user > forced > detected)
+  const detectedNiche = userProvidedNiche || forcedNiche || (adUrl ? detectNicheFromUrl(adUrl) : "geral");
 
   // 2. Buscar dados do nicho no database
   const nicheData = NICHE_DATABASE[detectedNiche];

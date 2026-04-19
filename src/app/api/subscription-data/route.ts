@@ -25,12 +25,20 @@ export async function GET() {
       return NextResponse.json({
         credits_remaining: 5,
         plan: 'free',
+      }, {
+        headers: {
+          'Cache-Control': 'private, max-age=60, stale-while-revalidate=120'
+        }
       });
     }
 
     return NextResponse.json({
       credits_remaining: subscription.credits_remaining || 5,
       plan: subscription.plan || 'free',
+    }, {
+      headers: {
+        'Cache-Control': 'private, max-age=60, stale-while-revalidate=120'
+      }
     });
   } catch (error) {
     console.error('Error fetching subscription data:', error);

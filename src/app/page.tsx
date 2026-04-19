@@ -10,7 +10,7 @@ export default function Home() {
       name: 'Pedro Alves',
       role: 'Gestor de Tráfego',
       location: 'São Paulo',
-      text: 'Com o Spy Bot, aumentei meu ROI em 3x em apenas 15 dias. Antes eu gastava dias criando criativos.',
+      text: 'Com o AdClone, aumentei meu ROI em 3x em apenas 15 dias. Antes eu gastava dias criando criativos.',
       rating: 5,
     },
     {
@@ -24,7 +24,7 @@ export default function Home() {
       name: 'Rafael Souza',
       role: 'Infoprodutor',
       location: 'Recife',
-      text: 'Melhor investimento que fiz. Os criativos analisados pelo Spy Bot converteram muito mais.',
+      text: 'Melhor investimento que fiz. Os criativos analisados pelo AdClone converteram muito mais.',
       rating: 5,
     },
   ];
@@ -32,7 +32,7 @@ export default function Home() {
   const faqs = [
     {
       q: 'Funciona para qualquer nicho?',
-      a: 'Sim! O Spy Bot funciona com qualquer nicho — e-commerce, infoprodutos, serviços, B2B, tudo. A IA aprende padrões de conversão universais.',
+      a: 'Sim! O AdClone funciona com qualquer nicho — e-commerce, infoprodutos, serviços, B2B, tudo. A IA aprende padrões de conversão universais.',
     },
     {
       q: 'Preciso ter conta no Facebook Ads?',
@@ -48,7 +48,7 @@ export default function Home() {
     },
     {
       q: 'Preciso saber programar?',
-      a: 'Não. O Spy Bot é uma plataforma visual. Basta colar o link do anúncio e clicar — toda a mágica acontece automaticamente.',
+      a: 'Não. O AdClone é uma plataforma visual. Basta colar o link do anúncio e clicar — toda a mágica acontece automaticamente.',
     },
   ];
 
@@ -99,7 +99,7 @@ export default function Home() {
       {/* ===== NAVBAR FIXA ===== */}
       <nav className="fixed top-0 w-full bg-dark-900/80 backdrop-blur-md border-b border-slate-800/50 z-50">
         <div className="max-w-6xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6 py-4 flex items-center justify-between">
-          <div className="text-2xl font-bold text-brand-500">Spy Bot</div>
+          <div className="text-2xl font-bold text-brand-500">AdClone</div>
           <a
             href="#checkout-ticto"
             className="bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2 px-6 rounded-lg transition-all"
@@ -144,7 +144,7 @@ export default function Home() {
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-blue-500"></div>
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-pink-500 to-purple-500"></div>
           </div>
-          <span className="text-sm">847+ anunciantes usando Spy Bot</span>
+          <span className="text-sm">847+ anunciantes usando AdClone</span>
         </div>
       </section>
 
@@ -207,7 +207,7 @@ export default function Home() {
       {/* ===== FEATURES ===== */}
       <section className="w-full bg-dark-800/50 py-20">
         <div className="max-w-6xl mx-auto px-2 sm:px-3 md:px-4 lg:px-6">
-          <h2 className="text-4xl font-bold text-center mb-16">O que você ganha com Spy Bot</h2>
+          <h2 className="text-4xl font-bold text-center mb-16">O que você ganha com AdClone</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-6">
             {features.map((feature, idx) => (
               <div key={idx} className="bg-dark-900 p-8 rounded-2xl border border-slate-800">
@@ -268,7 +268,7 @@ export default function Home() {
         <div className="bg-gradient-to-b from-dark-800 to-dark-900 p-10 md:p-16 rounded-3xl border border-brand-500/20 text-center shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-brand-500/10 blur-3xl rounded-full"></div>
 
-          <h2 className="text-4xl font-bold mb-4">Acesso Ilimitado ao Spy Bot</h2>
+          <h2 className="text-4xl font-bold mb-4">Acesso Ilimitado ao AdClone</h2>
           <p className="text-slate-400 mb-12 mx-auto max-w-xl">
             Pare de pagar R$ 1.500+ para designers ou copywriters freelancers que atrasam suas campanhas.
           </p>
@@ -341,10 +341,10 @@ export default function Home() {
           <div className="flex flex-col md:flex-row justify-between items-center gap-8">
             <div>
               <div className="text-2xl font-bold text-brand-500 mb-2">
-                Spy Bot
+                AdClone
               </div>
               <p className="text-slate-500">
-                © 2024 Spy Bot. Todos os direitos reservados.
+                © 2024 AdClone. Todos os direitos reservados.
               </p>
             </div>
             <div className="flex gap-8 text-slate-500 text-sm">

@@ -2,6 +2,13 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["apify-client"],
+  redirects: async () => [
+    {
+      source: "/",
+      destination: "/vendas.html",
+      permanent: false,
+    },
+  ],
   headers: async () => [
     {
       source: "/(.*)",

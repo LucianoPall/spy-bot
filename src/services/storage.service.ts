@@ -16,6 +16,7 @@ export interface UploadResult {
   url: string;
   provider: 'supabase' | 'dalle' | 'unsplash' | 'fallback';
   isTemporary: boolean;
+  uploaded: boolean;
   errorMessage?: string;
 }
 
@@ -41,7 +42,8 @@ export async function uploadImageToSupabase(
       return {
         url: imageUrl || 'https://images.unsplash.com/photo-1470711324350-e58093e67289?w=800',
         provider: 'fallback',
-        isTemporary: false
+        isTemporary: false,
+        uploaded: false
       };
     }
 
@@ -53,18 +55,19 @@ export async function uploadImageToSupabase(
       return {
         url: imageUrl,
         provider: 'fallback',
-        isTemporary: false
+        isTemporary: false,
+        uploaded: false
       };
     }
 
     log.info('STORAGE', 'Iniciando upload', { imageNumber, urlPrefix: imageUrl.substring(0, 50) });
 
-    // Fazer download com retry
+    // Fazer download com retry (5 tentativas, timeout 30s)
     let imageBlob: Blob | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
 
         const response = await fetch(imageUrl, {
           signal: controller.signal,
@@ -78,8 +81,8 @@ export async function uploadImageToSupabase(
           break;
         }
       } catch (downloadError) {
-        log.warn('STORAGE', `Tentativa ${attempt + 1} falhou`, downloadError);
-        if (attempt < 2) {
+        log.warn('STORAGE', `Tentativa download ${attempt + 1}/5 falhou`, downloadError);
+        if (attempt < 4) {
           await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
         }
       }
@@ -87,30 +90,46 @@ export async function uploadImageToSupabase(
 
     // Se não conseguiu download, retornar URL original
     if (!imageBlob) {
-      log.warn('STORAGE', 'Falha no download, usando URL original');
+      log.warn('STORAGE', 'Falha no download após 5 tentativas, usando URL original');
       return {
         url: imageUrl,
         provider: detectImageProvider(imageUrl),
-        isTemporary: true
+        isTemporary: true,
+        uploaded: false
       };
     }
 
-    // Upload para Supabase
-    const fileName = `${userId}/${Date.now()}-image${imageNumber}.png`;
+    // Upload para Supabase com retry (até 3 tentativas, 2s entre cada)
+    let uploadSuccess = false;
+    let fileName = '';
+    for (let uploadAttempt = 0; uploadAttempt < 3; uploadAttempt++) {
+      fileName = `${userId}/${Date.now()}-image${imageNumber}.png`;
 
-    const { data, error: uploadError } = await supabase.storage
-      .from('spybot_images')
-      .upload(fileName, imageBlob, {
-        cacheControl: '31536000', // 1 ano
-        upsert: false
-      });
+      const { data, error: uploadError } = await supabase.storage
+        .from('spybot_images')
+        .upload(fileName, imageBlob, {
+          cacheControl: '31536000', // 1 ano
+          upsert: false
+        });
 
-    if (uploadError) {
-      log.warn('STORAGE', 'Erro no upload', uploadError);
+      if (!uploadError) {
+        uploadSuccess = true;
+        break;
+      }
+
+      log.warn('STORAGE', `Tentativa upload ${uploadAttempt + 1}/3 falhou`, uploadError);
+      if (uploadAttempt < 2) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+
+    if (!uploadSuccess) {
+      log.warn('STORAGE', 'Upload falhou após 3 tentativas, usando URL original');
       return {
         url: imageUrl,
         provider: detectImageProvider(imageUrl),
-        isTemporary: true
+        isTemporary: true,
+        uploaded: false
       };
     }
 
@@ -126,7 +145,8 @@ export async function uploadImageToSupabase(
     return {
       url: finalUrl,
       provider: 'supabase',
-      isTemporary: false
+      isTemporary: false,
+      uploaded: true
     };
   } catch (error) {
     log.error('STORAGE', 'Erro crítico', error);
@@ -134,7 +154,8 @@ export async function uploadImageToSupabase(
     return {
       url: imageUrl || 'https://images.unsplash.com/photo-1470711324350-e58093e67289?w=800',
       provider: detectImageProvider(imageUrl),
-      isTemporary: true
+      isTemporary: true,
+      uploaded: false
     };
   }
 }

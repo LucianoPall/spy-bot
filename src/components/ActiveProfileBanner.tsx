@@ -48,7 +48,7 @@ export default function ActiveProfileBanner() {
             Configure seu Nicho de Mercado
           </h3>
           <p className="text-yellow-300/80 text-sm mb-4">
-            Adicione informações sobre seu negócio para que o Spy Bot gere copies e imagens
+            Adicione informações sobre seu negócio para que o AdClone gere copies e imagens
             100% personalizadas para sua marca.
           </p>
           <Link

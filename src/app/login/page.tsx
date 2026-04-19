@@ -38,7 +38,7 @@ export default function LoginPage() {
                 <div className="w-full max-w-md">
                     <div className="mb-10">
                         <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-green-400 to-emerald-600">
-                            Spy Bot
+                            AdClone
                         </h1>
                         <h2 className="text-2xl font-semibold mt-4">Acesso Restrito</h2>
                         <p className="text-gray-400 mt-2">

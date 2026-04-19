@@ -129,3 +129,51 @@ export function sanitizeInput(input: string): string {
     .replace(/'/g, '&#x27;')
     .replace(/\//g, '&#x2F;');
 }
+
+/**
+ * Valida compatibilidade com Apify
+ * Detecta URLs que Apify pode ter dificuldade em processar
+ * @param url - URL a ser validada
+ * @returns { compatible, warning?, recommendation? }
+ */
+export interface ApifyCompatibilityResult {
+  compatible: boolean;
+  warning?: string;
+  recommendation?: string;
+}
+
+export function validateApifyCompatibility(url: string): ApifyCompatibilityResult {
+  // Check 1: Detectar URL da Ad Library (com ou sem ID)
+  if (url.includes('/ads/library/')) {
+    // Se contém "ads/library" mas NÃO tem ad_id ou post_id, é genérica
+    if (!url.includes('ad_id=') && !url.includes('post_id=')) {
+      return {
+        compatible: true, // Compatível, mas com aviso
+        warning: 'URL da Ad Library pode ter dificuldade para ser extraída. Sistema tentará usar dados mock com fallback.',
+        recommendation: 'Para melhor resultado, use: https://www.facebook.com/ads/library/?ad_id=XXXXX ou a URL direta do anúncio'
+      };
+    }
+
+    // Se contém "ads/library", alertar sobre risco de bloqueio
+    return {
+      compatible: true,
+      warning: 'Aviso: URLs da Facebook Ads Library podem ocasionalmente ser bloqueadas por Cloudflare.',
+      recommendation: 'Se falhar, tente com a URL direta do anúncio. Se necessário, forneça o nicho manualmente.'
+    };
+  }
+
+  // Check 2: Detectar URL muito genérica (sem parâmetros de identificação)
+  const parsedUrl = new URL(url);
+  const pathname = parsedUrl.pathname.toLowerCase();
+
+  // Se é apenas "/ads" sem nada mais, continua tentando
+  if ((pathname === '/ads' || pathname === '/ads/') && !url.includes('?')) {
+    return {
+      compatible: true,
+      warning: 'URL do Facebook é genérica demais. Sistema usará fallback se necessário.'
+    };
+  }
+
+  // Check 3: URL parece válida
+  return { compatible: true };
+}

@@ -4,7 +4,11 @@ import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
-export default function LogoutButton() {
+interface LogoutButtonProps {
+    collapsed?: boolean;
+}
+
+export default function LogoutButton({ collapsed = false }: LogoutButtonProps) {
     const router = useRouter();
 
     const handleLogout = async () => {
@@ -16,10 +20,15 @@ export default function LogoutButton() {
     return (
         <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 text-red-400 hover:bg-red-900/10 rounded-lg transition-all"
+            title={collapsed ? "Sair da Conta" : ""}
+            className={`w-full flex items-center gap-3 py-3 text-red-400 hover:bg-red-900/10 rounded-lg transition-all ${
+                collapsed ? "justify-center px-2" : "px-4"
+            }`}
         >
-            <LogOut size={20} />
-            <span className="font-medium">Sair da Conta</span>
+            <LogOut size={20} className="flex-shrink-0" />
+            <span className={`font-medium whitespace-nowrap transition-all duration-300 ${collapsed ? "hidden" : ""}`}>
+                Sair da Conta
+            </span>
         </button>
     );
 }

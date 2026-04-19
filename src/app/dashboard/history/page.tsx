@@ -8,17 +8,19 @@ export const revalidate = 10;
 
 export default async function HistoryPage() {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    // ⚡ OTIMIZAÇÃO: getSession() lê do cookie (sem network call) — middleware já validou
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
 
     if (!user) redirect("/login");
 
     // ⚡ OTIMIZAÇÃO: Usar select limitado (só campos necessários) + revalidate
+    // Paginação é feita no client (HistoryGallery), então buscamos todos os clones do usuário
     const { data: clones, error } = await supabase
         .from("spybot_generations")
-        .select("id, niche, created_at, variante1, image1, image2, image3, original_copy, original_image", { count: 'exact' })
+        .select("id, niche, created_at, variante1, variante2, variante3, image1, image2, image3, original_copy, original_image, original_url, strategic_analysis", { count: 'exact' })
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(50); // ⚡ Limitar a 50 clones (otimização de pagination)
+        .order("created_at", { ascending: false });
 
     if (error) {
         console.error("Erro ao carregar histórico", error);

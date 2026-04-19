@@ -18,24 +18,20 @@ export default function KPICards() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // ⚡ Lazy load - não bloqueia rendering
-    const timer = setTimeout(() => {
-      (async () => {
-        try {
-          const response = await fetch("/api/kpi-data");
-          if (response.ok) {
-            const data = await response.json();
-            setKpiData(data);
-          }
-        } catch (error) {
-          // Silent fail
-        } finally {
-          setLoading(false);
+    // ⚡ Fetch imediato — sem delay artificial
+    (async () => {
+      try {
+        const response = await fetch("/api/kpi-data");
+        if (response.ok) {
+          const data = await response.json();
+          setKpiData(data);
         }
-      })();
-    }, 1000); // Delay 1s após render
-
-    return () => clearTimeout(timer);
+      } catch (error) {
+        // Silent fail
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
   return (

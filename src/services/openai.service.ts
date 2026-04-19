@@ -24,6 +24,9 @@ export interface OpenAIGenerationResult {
     emotion: string;
     cta: string;
     targeting: string;
+    persuasion_structure: string;
+    angle: string;
+    offer_type: string;
   };
   isError: boolean;
   errorMessage?: string;
@@ -75,7 +78,10 @@ Retorne um JSON com exatamente esta estrutura:
     "promise": "benefício principal",
     "emotion": "emoção predominante",
     "cta": "call to action",
-    "targeting": "público-alvo identificado"
+    "targeting": "público-alvo identificado",
+    "persuasion_structure": "estrutura de persuasão usada (AIDA, PAS, etc.)",
+    "angle": "ângulo de abordagem do anúncio",
+    "offer_type": "tipo de oferta (lead magnet, venda direta, etc.)"
   }
 }`;
 
@@ -115,7 +121,10 @@ Retorne um JSON com exatamente esta estrutura:
         promise: parsed.strategicAnalysis?.promise || 'N/A',
         emotion: parsed.strategicAnalysis?.emotion || 'N/A',
         cta: parsed.strategicAnalysis?.cta || 'N/A',
-        targeting: parsed.strategicAnalysis?.targeting || 'N/A'
+        targeting: parsed.strategicAnalysis?.targeting || 'N/A',
+        persuasion_structure: parsed.strategicAnalysis?.persuasion_structure || 'N/A',
+        angle: parsed.strategicAnalysis?.angle || 'N/A',
+        offer_type: parsed.strategicAnalysis?.offer_type || 'N/A'
       },
       isError: false
     };
@@ -134,7 +143,10 @@ Retorne um JSON com exatamente esta estrutura:
         promise: 'Indisponível',
         emotion: 'Indisponível',
         cta: 'Indisponível',
-        targeting: 'Indisponível'
+        targeting: 'Indisponível',
+        persuasion_structure: 'Indisponível',
+        angle: 'Indisponível',
+        offer_type: 'Indisponível'
       },
       isError: true,
       errorMessage

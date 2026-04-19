@@ -5,7 +5,9 @@ import { redirect } from "next/navigation";
 
 export default async function BillingPage() {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    // ⚡ OTIMIZAÇÃO: getSession() lê do cookie (sem network call) — middleware já validou
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
 
     if (!user) redirect("/login");
 
@@ -107,7 +109,7 @@ export default async function BillingPage() {
                         <div className="p-4 bg-green-500/10 rounded-full mb-6">
                             <Zap className="text-green-500" size={32} />
                         </div>
-                        <h3 className="text-2xl font-bold text-white mb-2">Spy Bot PRO</h3>
+                        <h3 className="text-2xl font-bold text-white mb-2">AdClone PRO</h3>
                         <p className="text-gray-400 text-sm mb-6">
                             Pare de perder os criativos vitoriosos da concorrência. Desbloqueie todas as limitações e domine o seu nicho.
                         </p>

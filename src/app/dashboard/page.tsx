@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { Search, Loader2, Copy, CheckCircle2, AlertTriangle, Download, Brain } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import type { StrategicAnalysis } from "@/lib/types";
-import ActiveProfileBanner from "@/components/ActiveProfileBanner";
 import KPICards from "@/components/KPICards";
 import ImageTypeIndicator from "@/components/ImageTypeIndicator";
 
@@ -184,7 +183,7 @@ export default function DashboardPage() {
     };
 
     const handleSaveClone = async () => {
-        if (!result || !url) {
+        if (!result || (!url && !manualCopy)) {
             return;
         }
 
@@ -194,15 +193,14 @@ export default function DashboardPage() {
         setTimeout(() => {
             setResult(null);
             setUrl('');
+            setManualCopy('');
+            setManualImage('');
             setSaving(false);
         }, 800);
     };
 
     return (
         <div className="w-full">
-            {/* Active Profile Banner */}
-            <ActiveProfileBanner />
-
             {/* KPI Cards */}
             <KPICards />
 
@@ -406,7 +404,7 @@ export default function DashboardPage() {
                                 </div>
                                 <div>
                                     <h3 className="text-lg font-bold text-white">Análise Estratégica Profunda</h3>
-                                    <p className="text-xs text-gray-500">DNA persuasivo decodificado pelo Spy Bot</p>
+                                    <p className="text-xs text-gray-500">DNA persuasivo decodificado pelo AdClone</p>
                                 </div>
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">

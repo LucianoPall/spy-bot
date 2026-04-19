@@ -6,8 +6,8 @@
   "regions": ["sfo1"],
   "functions": {
     "src/app/api/**": {
-      "maxDuration": 30,
-      "memory": 3008
+      "maxDuration": 60,
+      "memory": 1024
     },
     "src/app/api/internal/batch-scrape/route.ts": {
       "maxDuration": 300,

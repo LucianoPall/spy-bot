@@ -3,16 +3,18 @@ import { ensureError } from '@/lib/types-common';
 import { createClient as createServerClient } from '@/utils/supabase/server';
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+export const dynamic = 'force-dynamic';
 
 /**
  * Endpoint para verificar saúde do Supabase
  * AUTENTICADO: Apenas administradores podem acessar
  */
 export async function GET() {
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
   // Verificar autenticação e permissão de admin
   const supabaseAuth = await createServerClient();
   const { data: { user } } = await supabaseAuth.auth.getUser();
