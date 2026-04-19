@@ -22,9 +22,9 @@ export async function sendDailyReport(adminEmail: string, data: DailyReportData)
 
   try {
     const response = await resend.emails.send({
-      from: 'Spy Bot <onboarding@resend.dev>',
+      from: 'AdClone <onboarding@resend.dev>',
       to: adminEmail,
-      subject: `[Spy Bot] Relatório Diário - ${new Date().toLocaleDateString('pt-BR')}`,
+      subject: `[AdClone] Relatório Diário - ${new Date().toLocaleDateString('pt-BR')}`,
       html,
     });
 
@@ -69,7 +69,7 @@ function buildDailyReportHTML(data: DailyReportData): string {
       <body>
         <div class="container">
           <div class="header">
-            <h1>📊 Relatório Diário - Spy Bot</h1>
+            <h1>📊 Relatório Diário - AdClone</h1>
             <p>${new Date().toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
           </div>
 
@@ -102,7 +102,7 @@ function buildDailyReportHTML(data: DailyReportData): string {
           </table>
 
           <div class="footer">
-            <p>Este é um relatório automático do Spy Bot. Não responda a este email.</p>
+            <p>Este é um relatório automático do AdClone. Não responda a este email.</p>
           </div>
         </div>
       </body>
