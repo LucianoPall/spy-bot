@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/playwright-report
+/test-results
 
 # next.js
 /.next/
@@ -60,3 +62,5 @@ QUICK_REFERENCE*.md
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+.vercel
