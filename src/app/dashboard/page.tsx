@@ -41,6 +41,7 @@ export default function DashboardPage() {
     const [error, setError] = useState("");
     const [result, setResult] = useState<GenerationResult | null>(null);
     const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+    const [cloneCount, setCloneCount] = useState(0);
 
     useEffect(() => {
         const urlParam = searchParams.get("url");
@@ -159,6 +160,7 @@ export default function DashboardPage() {
             });
 
             setResult(result);
+            setCloneCount((c) => c + 1);
         } catch (err: unknown) {
             setError((err as { message?: string } | undefined)?.message || 'Erro desconhecido');
         } finally {
@@ -202,7 +204,7 @@ export default function DashboardPage() {
     return (
         <div className="w-full">
             {/* KPI Cards */}
-            <KPICards />
+            <KPICards refreshKey={cloneCount} />
 
             <div className="mb-8">
                 <h2 className="text-3xl font-bold text-white mb-2">Clonador & Criativo AI</h2>
@@ -388,7 +390,7 @@ export default function DashboardPage() {
                         {/* Texto Original */}
                         <div className="bg-[#111] border border-[#222] rounded-xl p-6 flex flex-col">
                             <h3 className="text-lg font-semibold text-gray-300 mb-4 border-b border-[#222] pb-2">Copy Original (O que ele fez)</h3>
-                            <div className="flex-1 bg-[#0a0a0a] p-4 rounded-lg border border-[#222] text-sm text-gray-400 overflow-y-auto max-h-64 whitespace-pre-wrap">
+                            <div className="flex-1 bg-[#0a0a0a] p-4 rounded-lg border border-[#222] text-sm text-gray-400 overflow-y-auto max-h-[600px] whitespace-pre-wrap">
                                 {result.originalAd?.copy || "Texto não identificado"}
                             </div>
                         </div>

@@ -9,7 +9,7 @@ interface KPIData {
   niche: string;
 }
 
-export default function KPICards() {
+export default function KPICards({ refreshKey = 0 }: { refreshKey?: number }) {
   const [kpiData, setKpiData] = useState<KPIData>({
     credits: 0,
     totalClones: 0,
@@ -18,7 +18,6 @@ export default function KPICards() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // ⚡ Fetch imediato — sem delay artificial
     (async () => {
       try {
         const response = await fetch("/api/kpi-data");
@@ -32,7 +31,7 @@ export default function KPICards() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [refreshKey]);
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4 mb-8">
