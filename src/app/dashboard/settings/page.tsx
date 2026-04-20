@@ -527,6 +527,7 @@ function NotificacoesTab() {
   useEffect(() => {
     try {
       const stored = localStorage.getItem(NOTIFICATION_PREFS_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR hydration: localStorage only exists on client
       if (stored) setPrefs(JSON.parse(stored));
     } catch {
       // ignore

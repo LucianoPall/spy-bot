@@ -71,6 +71,7 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- API data fetch with setState is intentional
     fetchStats(period);
   }, [period, fetchStats]);
 

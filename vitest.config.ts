@@ -29,7 +29,7 @@ export default defineConfig({
 
     // Include/Exclude patterns
     include: ['**/*.test.ts', '**/*.spec.ts'],
-    exclude: ['node_modules', 'dist', '.next'],
+    exclude: ['node_modules', 'dist', '.next', 'tests/e2e/**', 'playwright-report/**'],
 
     // Isolação de testes
     isolate: true,

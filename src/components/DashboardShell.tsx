@@ -21,8 +21,10 @@ export default function DashboardShell({ children, userName, isPro, isAdmin = fa
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved !== null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR hydration: localStorage only exists on client
       setCollapsed(saved === "true");
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR hydration guard
     setMounted(true);
   }, []);
 
