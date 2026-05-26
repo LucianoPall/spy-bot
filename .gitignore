@@ -64,3 +64,5 @@ QUICK_REFERENCE*.md
 next-env.d.ts
 
 .vercel
+
+certificates
