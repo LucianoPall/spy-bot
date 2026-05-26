@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Search, Loader2, Copy, CheckCircle2, AlertTriangle, Download, Brain } from "lucide-react";
+import { Search, Loader2, Copy, CheckCircle2, AlertTriangle, Download, Brain, ShieldAlert } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import type { StrategicAnalysis } from "@/lib/types";
 import KPICards from "@/components/KPICards";
@@ -11,6 +11,13 @@ interface GeneratedImage {
     url: string;
     type: 'generated' | 'placeholder' | 'fallback';
     niche?: string;
+}
+
+interface BlockedContent {
+    message: string;
+    suggestion: string;
+    allowedNiches: string[];
+    blockedLayer?: number;
 }
 
 interface GenerationResult {
@@ -39,6 +46,7 @@ export default function DashboardPage() {
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
+    const [blocked, setBlocked] = useState<BlockedContent | null>(null);
     const [result, setResult] = useState<GenerationResult | null>(null);
     const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
     const [cloneCount, setCloneCount] = useState(0);
@@ -68,6 +76,7 @@ export default function DashboardPage() {
 
         setLoading(true);
         setError("");
+        setBlocked(null);
         setResult(null);
 
         try {
@@ -112,6 +121,16 @@ export default function DashboardPage() {
             const data = await response.json();
 
             if (!response.ok) {
+                // Bloqueio por conteúdo adulto: exibir card educativo (não como erro vermelho)
+                if (data.error === "ADULT_CONTENT_BLOCKED") {
+                    setBlocked({
+                        message: data.message,
+                        suggestion: data.suggestion,
+                        allowedNiches: data.allowedNiches || [],
+                        blockedLayer: data.blockedLayer
+                    });
+                    return;
+                }
                 throw new Error(data.error || "Ocorreu um erro ao processar o anúncio.");
             }
 
@@ -220,6 +239,7 @@ export default function DashboardPage() {
                         onClick={() => {
                             setInputMode("url");
                             setError("");
+                            setBlocked(null);
                         }}
                         className={`px-4 py-2 rounded-lg font-medium transition-all ${
                             inputMode === "url"
@@ -234,6 +254,7 @@ export default function DashboardPage() {
                         onClick={() => {
                             setInputMode("manual");
                             setError("");
+                            setBlocked(null);
                         }}
                         className={`px-4 py-2 rounded-lg font-medium transition-all ${
                             inputMode === "manual"
@@ -339,6 +360,35 @@ export default function DashboardPage() {
                     <div className="mt-4 p-4 bg-red-900/20 border border-red-500/30 rounded-lg flex items-start gap-3 text-red-400">
                         <AlertTriangle className="shrink-0 mt-0.5" size={20} />
                         <p className="text-sm">{error}</p>
+                    </div>
+                )}
+
+                {blocked && (
+                    <div className="mt-4 p-5 bg-amber-950/30 border border-amber-500/40 rounded-xl flex items-start gap-4 text-amber-100">
+                        <ShieldAlert className="shrink-0 mt-0.5 text-amber-400" size={24} />
+                        <div className="flex-1 space-y-3">
+                            <h3 className="font-semibold text-amber-200 text-base">
+                                Conteúdo não suportado
+                            </h3>
+                            <p className="text-sm leading-relaxed text-amber-100/90">
+                                {blocked.message}
+                            </p>
+                            <p className="text-sm leading-relaxed text-amber-100/90">
+                                <strong className="text-amber-200">Sugestão:</strong> {blocked.suggestion}
+                            </p>
+                            {blocked.allowedNiches.length > 0 && (
+                                <div className="flex flex-wrap gap-2 pt-1">
+                                    {blocked.allowedNiches.map((n) => (
+                                        <span
+                                            key={n}
+                                            className="px-2.5 py-1 text-xs rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 font-medium"
+                                        >
+                                            {n}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
             </div>

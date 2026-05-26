@@ -22,6 +22,9 @@ import { getMockAdData } from '@/lib/mockAdData';
 import { GeneratedImages } from '@/lib/types';
 import { detectNicheWithScores, getNicheConfidencePercentage } from '@/lib/niche-detection';
 import { getNichePromptContext } from '@/lib/niche-prompts';
+import { scrapeLandingForNicheContext, normalizeLandingUrl } from '@/lib/landing-page-scraper';
+import { detectAdultContent, ADULT_CONTENT_BLOCK_MESSAGE, type ContentSafetyCheck } from '@/lib/content-safety';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { refundOnApifyFailure, refundOnOpenAIFailure } from './validation-refund';
 import { checkRateLimit, getLimitForRoute } from '@/lib/rate-limiter';
 import { validateFacebookAdUrl, validateApifyCompatibility } from '@/lib/validation';
@@ -131,11 +134,38 @@ export async function POST(req: Request) {
 
     logger.success(STAGES.VALIDATION, 'Validação OK');
 
-    // ========== NICHE DETECTION ==========
+    // ========== CONTENT SAFETY — CAMADA 1 (pré-Apify, só URL) ==========
+    // Bloqueia conteúdo adulto já pela URL, antes de gastar recursos.
+    if (adUrl && !usingManualInput) {
+      const layer1Check = detectAdultContent({ url: adUrl });
+      if (layer1Check.blocked) {
+        logger.warn(STAGES.VALIDATION, '🛡️ Conteúdo adulto bloqueado (Camada 1 — URL)', {
+          reason: layer1Check.reason,
+          matches: layer1Check.matches
+        });
+        await logBlockedContent(supabase, {
+          userId,
+          adUrl,
+          layer: 1,
+          check: layer1Check,
+          traceId
+        });
+        return NextResponse.json(
+          {
+            ...ADULT_CONTENT_BLOCK_MESSAGE,
+            traceId,
+            blockedLayer: 1
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // ========== NICHE DETECTION (inicial, só URL / manual copy) ==========
     const initialNicheDetection = usingManualInput
       ? detectNicheWithConfidence('manual://provided', manualCopy)
       : detectNicheWithConfidence(adUrl);
-    const detectedNiche = initialNicheDetection.niche;
+    let detectedNiche = initialNicheDetection.niche;
 
     // ========== AUTH + RATE LIMIT ==========
     let currentPlan = 'gratis';
@@ -176,6 +206,7 @@ export async function POST(req: Request) {
     logger.info(STAGES.APIFY_CALL, 'Iniciando extração');
     let originalCopy = '';
     let adImageUrl = '';
+    let adLinkUrl: string | undefined;
     let apifyErrorMessage = '';
 
     if (usingManualInput) {
@@ -199,6 +230,7 @@ export async function POST(req: Request) {
       } else {
         originalCopy = apifyResult.originalCopy;
         adImageUrl = apifyResult.adImageUrl;
+        adLinkUrl = apifyResult.adLinkUrl;
         logger.success(STAGES.APIFY_SUCCESS, '✅ Extração concluída');
       }
     }
@@ -207,6 +239,133 @@ export async function POST(req: Request) {
     if (!originalCopy) {
       const mockData = getMockAdData(adUrl, detectedNiche);
       originalCopy = mockData.copy;
+    }
+
+    // Aviso quando Apify retornou copy muito curto (provável fragmento/botão)
+    if (!usingManualInput && originalCopy.length > 0 && originalCopy.length < 30) {
+      logger.warn(STAGES.APIFY_SUCCESS, `⚠️ Copy extraído muito curto (${originalCopy.length} chars) — pode ser fragmento/botão`, {
+        copyPreview: originalCopy
+      });
+    }
+
+    // ========== CONTENT SAFETY — CAMADA 2 (pós-Apify, URL + copy) ==========
+    // Segunda linha de defesa: agora temos copy extraído, pode pegar casos
+    // que a URL crua não denunciava (ex: domínio genérico com conteúdo adulto).
+    const layer2Check = detectAdultContent({
+      url: adUrl,
+      copy: originalCopy + ' ' + (adLinkUrl || '')
+    });
+    if (layer2Check.blocked) {
+      logger.warn(STAGES.APIFY_SUCCESS, '🛡️ Conteúdo adulto bloqueado (Camada 2 — copy extraído)', {
+        reason: layer2Check.reason,
+        matches: layer2Check.matches,
+        copyPreview: originalCopy.substring(0, 100)
+      });
+      await logBlockedContent(supabase, {
+        userId,
+        adUrl,
+        layer: 2,
+        check: layer2Check,
+        copyPreview: originalCopy.substring(0, 200),
+        traceId
+      });
+      return NextResponse.json(
+        {
+          ...ADULT_CONTENT_BLOCK_MESSAGE,
+          traceId,
+          blockedLayer: 2
+        },
+        { status: 400 }
+      );
+    }
+
+    // ========== NICHE REFINEMENT (URL + copy real) ==========
+    // Re-detectar usando URL + copy extraído — URL do Ads Library (?id=NNN) não tem keywords,
+    // então a detecção inicial quase sempre cai em "geral". Com copy real extraído (Apify ou manual),
+    // refinamos pra pegar o nicho verdadeiro.
+    let currentConfidence = initialNicheDetection.confidencePercent;
+
+    if (userProvidedNiche) {
+      // Usuário forçou nicho manualmente → respeitar (skip refinamento automático)
+      if (userProvidedNiche !== detectedNiche) {
+        logger.info(STAGES.VALIDATION, '🎯 Nicho fornecido pelo usuário (override)', {
+          de: detectedNiche,
+          para: userProvidedNiche
+        });
+        detectedNiche = userProvidedNiche;
+        currentConfidence = 100;
+      }
+    } else if (originalCopy) {
+      const refined = detectNicheWithConfidence(adUrl || 'manual://provided', originalCopy);
+      if (
+        refined.niche !== detectedNiche &&
+        refined.confidencePercent > currentConfidence
+      ) {
+        logger.info(STAGES.VALIDATION, '🔄 Nicho refinado após extração do copy', {
+          de: `${detectedNiche} (${currentConfidence}%)`,
+          para: `${refined.niche} (${refined.confidencePercent}%)`
+        });
+        detectedNiche = refined.niche;
+        currentConfidence = refined.confidencePercent;
+      } else if (refined.confidencePercent > currentConfidence) {
+        // Mesmo nicho mas confiança maior — atualizar rastreamento
+        currentConfidence = refined.confidencePercent;
+      }
+    }
+
+    // ========== LANDING PAGE FALLBACK (sinal fraco) ==========
+    // Se depois do Apify a confiança ainda tá baixa ou o copy é fragmento/URL,
+    // visita a landing page de destino pra enriquecer o contexto.
+    // Só roda quando NÃO tem userProvidedNiche e quando o sinal atual é fraco.
+    const shouldTryLanding =
+      !userProvidedNiche &&
+      !usingManualInput &&
+      (currentConfidence < 40 || originalCopy.length < 30);
+
+    if (shouldTryLanding) {
+      // Candidatos de URL pra visitar: adLinkUrl do Apify → copy (se parecer URL/domínio)
+      const landingCandidate =
+        normalizeLandingUrl(adLinkUrl) ||
+        normalizeLandingUrl(originalCopy);
+
+      if (landingCandidate) {
+        logger.info(STAGES.VALIDATION, '🌐 Sinal fraco — visitando landing page pra enriquecer contexto', {
+          url: landingCandidate,
+          confiancaAtual: `${currentConfidence}%`,
+          copyLength: originalCopy.length
+        });
+
+        const scrape = await scrapeLandingForNicheContext(landingCandidate);
+        if (scrape.success && scrape.text) {
+          logger.info(STAGES.VALIDATION, '🌐 Landing scrapeada com sucesso', {
+            chars: scrape.text.length
+          });
+
+          // Re-detectar usando URL + copy + landing text
+          const enrichedText = `${originalCopy} ${scrape.text}`;
+          const landingRefined = detectNicheWithConfidence(
+            adUrl || landingCandidate,
+            enrichedText
+          );
+
+          if (landingRefined.confidencePercent > currentConfidence) {
+            logger.info(STAGES.VALIDATION, '🔄 Nicho refinado via landing page', {
+              de: `${detectedNiche} (${currentConfidence}%)`,
+              para: `${landingRefined.niche} (${landingRefined.confidencePercent}%)`
+            });
+            detectedNiche = landingRefined.niche;
+            currentConfidence = landingRefined.confidencePercent;
+          } else {
+            logger.info(STAGES.VALIDATION, 'ℹ️ Landing não melhorou confiança — mantendo nicho atual');
+          }
+        } else {
+          logger.warn(STAGES.VALIDATION, '⚠️ Falha no fallback de landing — mantendo nicho atual', {
+            reason: scrape.reason
+          });
+        }
+      } else {
+        logger.info(STAGES.VALIDATION, 'ℹ️ Sinal fraco mas sem URL de landing disponível');
+      }
     }
 
     // ========== OPENAI VARIATIONS ==========
@@ -422,4 +581,38 @@ function detectProvider(url: string): 'dalle' | 'supabase' | 'unsplash' | 'fallb
   if (url.includes('unsplash.com')) return 'unsplash';
   if (url.includes('supabase')) return 'supabase';
   return 'fallback';
+}
+
+/**
+ * Registra tentativa bloqueada na tabela de auditoria.
+ * Nunca lança — se a tabela não existir ou Supabase estiver fora,
+ * só loga warning e segue. O bloqueio HTTP acontece de qualquer jeito.
+ */
+async function logBlockedContent(
+  supabase: SupabaseClient,
+  entry: {
+    userId?: string;
+    adUrl?: string | null;
+    layer: 1 | 2;
+    check: ContentSafetyCheck;
+    copyPreview?: string;
+    traceId: string;
+  }
+): Promise<void> {
+  try {
+    await supabase.from('spybot_blocked_content').insert({
+      user_id: entry.userId || null,
+      ad_url: entry.adUrl || null,
+      layer: entry.layer,
+      reason: entry.check.reason || 'unknown',
+      matches: entry.check.matches,
+      copy_preview: entry.copyPreview || null,
+      trace_id: entry.traceId
+    });
+  } catch (err) {
+    // Graceful: auditoria não bloqueia a response
+    logger.warn(STAGES.SUPABASE_FAIL, '⚠️ Falha ao registrar auditoria de bloqueio', {
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
 }

@@ -15,6 +15,7 @@ import { log } from '@/lib/logger';
 export interface ApifyExtractionResult {
   originalCopy: string;
   adImageUrl: string;
+  adLinkUrl?: string; // URL da landing de destino (para fallback de niche detection)
   errorMessage?: string;
   isError: boolean;
 }
@@ -119,14 +120,29 @@ export async function extractAdWithApify(
         .replace(/\?stp=.*?&/, '?')
         .replace(/\?stp=.*?$/, '');
 
+      // Extrair URL da landing de destino (vários campos possíveis dependendo do formato)
+      const rawLinkUrl = String(
+        snap.linkUrl ||
+          snap.link_url ||
+          snap.ctaLinkUrl ||
+          snap.linkDescription ||
+          adData.linkUrl ||
+          adData.link_url ||
+          adData.ctaUrl ||
+          adData.snapshot?.linkUrl ||
+          ''
+      ).trim();
+
       log.info('APIFY', 'Extração concluída', {
         copyLength: originalCopy.length,
-        hasImage: !!adImageUrl
+        hasImage: !!adImageUrl,
+        hasLinkUrl: !!rawLinkUrl
       });
 
       return {
         originalCopy,
         adImageUrl,
+        adLinkUrl: rawLinkUrl || undefined,
         isError: false
       };
     } else {
