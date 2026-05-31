@@ -58,8 +58,8 @@ export default function Home() {
       desc: 'A IA descobre exatamente qual parte do texto converte mais.',
     },
     {
-      title: 'Geração de Imagem DALL-E 3',
-      desc: 'Cria variantes de imagem alinhadas ao seu produto.',
+      title: 'Geração de Imagens com IA',
+      desc: 'Clona o estilo do criativo vencedor — fotos e artes com texto.',
     },
     {
       title: '3 Variantes por Análise',
@@ -284,7 +284,7 @@ export default function Home() {
             <ul className="space-y-3 text-slate-300">
               <li>✅ Análise ilimitada de anúncios</li>
               <li>✅ 3 variantes geradas por análise</li>
-              <li>✅ Imagens com DALL-E 3</li>
+              <li>✅ Imagens com IA (clona o estilo do anúncio)</li>
               <li>✅ Histórico completo de análises</li>
               <li>✅ Acesso ao perfil de marca personalizado</li>
               <li>✅ Suporte por email</li>

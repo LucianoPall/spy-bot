@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import {
   Save, UserCircle2, Building2, Target, MessageSquare, Loader2,
-  Key, Crown, Zap, AlertCircle, Shield, Bell, FileDown, Lock,
+  Crown, Zap, AlertCircle, Shield, Bell, FileDown, Lock,
   Eye, EyeOff, Check, X
 } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
@@ -91,7 +91,6 @@ function PerfilTab() {
     niche: "",
     targetAudience: "",
     toneOfVoice: "",
-    openaiKey: "",
   });
 
   useEffect(() => {
@@ -276,28 +275,6 @@ function PerfilTab() {
             className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg py-3 px-4 text-white focus:outline-none focus:border-green-500 transition-colors resize-none"
           />
         </div>
-
-        {subscription && subscription.plan === "pro" && (
-          <div className="space-y-2 mt-6 p-4 border border-green-500/20 bg-green-900/10 rounded-xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-2 bg-green-500/20 text-green-400 text-xs font-bold rounded-bl-lg">
-              Recurso PRO
-            </div>
-            <label className="text-sm font-medium text-green-400 flex items-center gap-2">
-              <Key size={16} /> Sua Propria Chave da API OpenAI (Opcional)
-            </label>
-            <p className="text-xs text-green-500/70 mb-2">
-              Insira sua chave sk-* para pagar direto para a OpenAI e nao consumir os creditos inclusos no PRO.
-            </p>
-            <input
-              type="password"
-              name="openaiKey"
-              value={profile.openaiKey}
-              onChange={handleChange}
-              placeholder="sk-proj-..."
-              className="w-full bg-[#050505] border border-green-500/40 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-colors font-mono text-sm"
-            />
-          </div>
-        )}
 
         {subscription && subscription.plan === "gratis" && subscription.credits_remaining === 0 && (
           <div className="space-y-2 mt-6 p-4 border border-yellow-500/20 bg-yellow-900/10 rounded-xl">

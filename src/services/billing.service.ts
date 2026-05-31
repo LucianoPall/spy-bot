@@ -101,8 +101,7 @@ export async function loadUserBilling(
  * Valida se usuário pode usar o serviço
  */
 export function validateBillingAccess(
-  billing: UserBilling,
-  hasBYOK: boolean
+  billing: UserBilling
 ): BillingCheckResult {
   // Admin sempre pode
   if (billing.isAdmin) {
@@ -122,8 +121,8 @@ export function validateBillingAccess(
     };
   }
 
-  // Trial (R$47) ou Gratis: precisa de créditos OU ter BYOK
-  if (billing.credits > 0 || hasBYOK) {
+  // Trial (R$47) ou Gratis: precisa de créditos
+  if (billing.credits > 0) {
     return {
       allowed: true,
       currentPlan: billing.plan,

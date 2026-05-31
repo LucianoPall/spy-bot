@@ -81,8 +81,11 @@ export default function PrivacidadePage() {
                 <strong>Stripe</strong> — processamento de pagamentos
               </li>
               <li>
-                <strong>OpenAI / DALL-E</strong> — geração de IA (prompts
+                <strong>Anthropic (Claude)</strong> — geração de copy/análise (prompts
                 enviados)
+              </li>
+              <li>
+                <strong>Pollinations</strong> — geração de imagens (prompts enviados)
               </li>
               <li>
                 <strong>Apify</strong> — coleta de dados públicos de anúncios
