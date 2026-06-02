@@ -86,7 +86,7 @@ export default function TermosPage() {
             </h2>
             <p>
               Os criativos gerados a partir de prompts do usuário pertencem ao
-              usuário, respeitadas as políticas dos provedores de IA (OpenAI/DALL-E).
+              usuário, respeitadas as políticas dos provedores de IA (Anthropic/Claude, Pollinations).
               A marca, interface e código-fonte do AdClone permanecem de propriedade
               da empresa operadora.
             </p>

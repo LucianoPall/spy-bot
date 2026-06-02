@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/utils/supabase/server';
 import { ensureError } from '@/lib/types-common';
 
@@ -14,7 +14,8 @@ interface TestResult {
 
 interface TestResults {
   timestamp: string;
-  openai: TestResult;
+  claude: TestResult;
+  pollinations: TestResult;
   apify: TestResult;
   supabase: TestResult;
   supabaseStorage: TestResult;
@@ -26,7 +27,7 @@ interface TestResults {
  * GET /api/test-apis
  * AUTENTICADO: Requer usuário logado (evita abuso de APIs pagas)
  */
-export async function GET(req: Request) {
+export async function GET() {
   // Verificar autenticação
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -40,51 +41,95 @@ export async function GET(req: Request) {
 
   const results: TestResults = {
     timestamp: new Date().toISOString(),
-    openai: { status: 'testing...', details: null, error: null },
+    claude: { status: 'testing...', details: null, error: null },
+    pollinations: { status: 'testing...', details: null, error: null },
     apify: { status: 'testing...', details: null, error: null },
     supabase: { status: 'testing...', details: null, error: null },
     supabaseStorage: { status: 'testing...', details: null, error: null },
     summary: { allOk: false, failedServices: [] }
   };
 
-  // TEST 1: OpenAI
+  // TEST 1: Claude / Anthropic (geração de copy + prompts de imagem)
+  // Usa Haiku 4.5 (modelo mais barato) só para confirmar chave + billing ativos.
   try {
-    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "dummy_key_for_build") {
-      results.openai = {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      results.claude = {
         status: 'warning',
-        details: 'Dummy key detected',
+        details: 'ANTHROPIC_API_KEY not set',
         error: null
       };
     } else {
-      const openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY
-      });
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages: [{ role: 'user', content: 'Respond with: OK' }],
-        max_tokens: 10
-      });
+      const message = await anthropic.messages.create(
+        {
+          model: 'claude-haiku-4-5',
+          max_tokens: 10,
+          messages: [{ role: 'user', content: 'Respond with: OK' }]
+        },
+        { timeout: 10000 }
+      );
 
-      results.openai = {
+      const textBlock = message.content.find((b) => b.type === 'text');
+      results.claude = {
         status: 'ok',
         details: {
-          testCompletion: completion.choices[0].message.content
+          model: message.model,
+          testCompletion: textBlock?.type === 'text' ? textBlock.text : null
         },
         error: null
       };
     }
   } catch (error: unknown) {
     const err = ensureError(error);
-    results.openai = {
+    results.claude = {
       status: 'error',
       details: null,
       error: err.message
     };
-    results.summary.failedServices.push('OpenAI');
+    results.summary.failedServices.push('Claude');
   }
 
-  // TEST 2: Apify
+  // TEST 2: Pollinations.ai (geração de imagens via Flux).
+  // API nova (gen.pollinations.ai) exige API key. sk_ = sem rate limit.
+  // Gera uma imagem pequena (256px) só pra confirmar que o serviço responde.
+  try {
+    const token = process.env.POLLINATIONS_TOKEN;
+    if (!token) {
+      results.pollinations = {
+        status: 'warning',
+        details: 'POLLINATIONS_TOKEN not set — imagens cairão no fallback Unsplash',
+        error: null
+      };
+    } else {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      const ping = await fetch(
+        'https://gen.pollinations.ai/image/test?width=256&height=256&model=flux',
+        { signal: controller.signal, headers: { 'User-Agent': 'SpyBot/1.0', Authorization: `Bearer ${token}` } }
+      );
+      clearTimeout(timeoutId);
+
+      const contentType = ping.headers.get('content-type') || '';
+      results.pollinations = {
+        status: ping.ok && contentType.startsWith('image/') ? 'ok' : 'error',
+        details: { httpStatus: ping.status, contentType, keyPrefix: token.slice(0, 3) },
+        error: ping.ok ? null : `HTTP ${ping.status}`
+      };
+      if (!ping.ok || !contentType.startsWith('image/')) {
+        results.summary.failedServices.push('Pollinations');
+      }
+    }
+  } catch (error: unknown) {
+    const err = ensureError(error);
+    results.pollinations = {
+      status: 'error',
+      error: err.message
+    };
+    results.summary.failedServices.push('Pollinations');
+  }
+
+  // TEST 3: Apify
   try {
     const apifyToken = process.env.APIFY_API_TOKEN;
     if (!apifyToken) {
@@ -100,7 +145,7 @@ export async function GET(req: Request) {
         { signal: controller.signal }
       );
       clearTimeout(timeoutId);
-      
+
       results.apify = {
         status: response.ok ? 'ok' : 'error',
         details: { httpStatus: response.status }
@@ -115,11 +160,11 @@ export async function GET(req: Request) {
     results.summary.failedServices.push('Apify');
   }
 
-  // TEST 3: Supabase
+  // TEST 4: Supabase
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    const { data, count, error } = await supabase
+    const { count, error } = await supabase
       .from('spybot_generations')
       .select('id', { count: 'exact' })
       .limit(1);
@@ -142,7 +187,7 @@ export async function GET(req: Request) {
     results.summary.failedServices.push('Supabase');
   }
 
-  // TEST 4: Supabase Storage
+  // TEST 5: Supabase Storage
   try {
     const supabase = await createClient();
     const { data: buckets, error } = await supabase.storage.listBuckets();

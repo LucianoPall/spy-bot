@@ -7,15 +7,14 @@
  *   2. Rate limiting check
  *   3. Billing validation
  *   4. Apify extraction
- *   5. OpenAI variations
- *   6. DALL-E images
+ *   5. Copy variations (Claude Sonnet 4.6)
+ *   6. Images (Pollinations.ai / Flux)
  *   7. Storage upload
  *   8. Database save
  *   9. Response format
  */
 
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
 import { createClient } from '@/utils/supabase/server';
 import { logger, STAGES } from './logger';
 import { getMockAdData } from '@/lib/mockAdData';
@@ -31,25 +30,16 @@ import { validateFacebookAdUrl, validateApifyCompatibility } from '@/lib/validat
 import {
   extractAdWithApify,
   generateCopyVariations,
-  generateImagesWithDALLE,
+  classifyNiche,
+  generateAdImages,
+  generateSingleImage,
   loadUserBilling,
   uploadImageToSupabase
 } from '@/services';
 import { deductCredit } from '@/services/billing.service';
 
-// Client inicializado lazily na primeira request - evita erro no build
-let _openai: OpenAI | null = null;
-function getOpenAIClient(): OpenAI {
-  if (!_openai) {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error('OPENAI_API_KEY não configurada no servidor');
-    }
-    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  }
-  return _openai;
-}
-
-export const maxDuration = 60;
+// 120s: criativos gráficos usam gptimage (~15-20s/imagem) + visão + copy.
+export const maxDuration = 120;
 
 /**
  * Detecta nicho usando sistema de scores
@@ -127,7 +117,8 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!process.env.APIFY_API_TOKEN || !process.env.OPENAI_API_KEY) {
+    // FAL_KEY é opcional: o serviço de imagem degrada graciosamente para stock (Unsplash).
+    if (!process.env.APIFY_API_TOKEN || !process.env.ANTHROPIC_API_KEY) {
       logger.error(STAGES.VALIDATION, 'Chaves de API ausentes');
       return NextResponse.json({ error: 'Chaves de API ausentes no servidor.' }, { status: 500 });
     }
@@ -368,12 +359,25 @@ export async function POST(req: Request) {
       }
     }
 
-    // ========== OPENAI VARIATIONS ==========
-    logger.info(STAGES.OPENAI_CALL, 'Gerando variações');
-    const openaiClient = getOpenAIClient();
+    // ========== NICHE FALLBACK VIA CLAUDE ==========
+    // A detecção por palavra-chave costuma dar match 0 em anúncios reais → "geral".
+    // Quando isso acontece (e o usuário não forçou nicho), classificamos via Claude
+    // a partir do copy real — muito mais confiável.
+    if (!userProvidedNiche && detectedNiche === 'geral' && originalCopy && originalCopy.length >= 20) {
+      const claudeNiche = await classifyNiche(originalCopy);
+      if (claudeNiche && claudeNiche !== 'geral') {
+        logger.info(STAGES.VALIDATION, '🤖 Nicho classificado via Claude (keyword falhou)', {
+          de: detectedNiche,
+          para: claudeNiche
+        });
+        detectedNiche = claudeNiche;
+      }
+    }
+
+    // ========== COPY VARIATIONS (Claude Sonnet 4.6) ==========
+    logger.info(STAGES.OPENAI_CALL, 'Gerando variações (Claude)');
     const contextPrompt = getNichePromptContext(detectedNiche);
     const openaiResult = await generateCopyVariations(
-      openaiClient,
       originalCopy,
       detectedNiche,
       contextPrompt
@@ -388,29 +392,20 @@ export async function POST(req: Request) {
 
     logger.success(STAGES.OPENAI_SUCCESS, '✅ Variações geradas');
 
+    // Imagem REAL do anúncio original (do Apify/manual), capturada ANTES de
+    // eventualmente gerarmos uma substituta — usada como referência de estilo
+    // na geração das variações (clonar a "pegada" do criativo vencedor).
+    const referenceImageUrl = adImageUrl || undefined;
+
     // ========== ORIGINAL IMAGE GENERATION ==========
-    // Quando não há imagem original (ex: modo manual sem URL), gera uma com DALL-E
+    // Quando não há imagem original (ex: modo manual sem URL), gera uma com Pollinations
     // baseada no copy original — fica no lugar da imagem do anúncio real
     if (!adImageUrl) {
-      logger.info(STAGES.DALLE_CALL, '🎨 Sem imagem original — gerando com DALL-E baseado no copy');
+      logger.info(STAGES.DALLE_CALL, '🎨 Sem imagem original — gerando com Pollinations baseado no copy');
       try {
         const originalPrompt = `Professional social media advertisement image for the following offer: "${originalCopy.substring(0, 300)}". Clean, modern, high quality photography, suitable for Facebook/Instagram ads. No text overlays.`;
 
-        const timeoutMs = 70000;
-        const dallePromise = openaiClient.images.generate({
-          model: 'dall-e-3',
-          prompt: originalPrompt,
-          size: '1024x1024',
-          quality: 'standard',
-          n: 1
-        });
-
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout ao gerar imagem original')), timeoutMs)
-        );
-
-        const originalImageResponse = await Promise.race([dallePromise, timeoutPromise]);
-        const generatedUrl = originalImageResponse.data?.[0]?.url;
+        const generatedUrl = await generateSingleImage(originalPrompt, 'square');
 
         if (generatedUrl) {
           if (user) {
@@ -419,24 +414,26 @@ export async function POST(req: Request) {
           } else {
             adImageUrl = generatedUrl;
           }
-          logger.success(STAGES.DALLE_SUCCESS, '✅ Imagem original gerada com DALL-E');
+          logger.success(STAGES.DALLE_SUCCESS, '✅ Imagem original gerada com Pollinations');
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         logger.warn(STAGES.DALLE_CALL, `⚠️ Falha ao gerar imagem original (${errMsg}) — usando stock image`);
-        // Fallback: usa imagem stock do Unsplash se DALL-E falhar
+        // Fallback: usa imagem stock do Unsplash se o Pollinations falhar
         const { getStockImageVariations } = await import('@/lib/stock-images');
         const fallback = await getStockImageVariations(detectedNiche, 1);
         adImageUrl = fallback[0]?.url || '';
       }
     }
 
-    // ========== DALLE IMAGES ==========
-    logger.info(STAGES.DALLE_CALL, 'Gerando imagens');
-    const dalleResult = await generateImagesWithDALLE(
-      openaiClient,
+    // ========== IMAGES (Pollinations.ai / Flux) ==========
+    // Cada imagem casa com o ângulo da sua variante (dor/solução/prova) e replica
+    // o estilo visual do anúncio original (referenceImageUrl) quando disponível.
+    logger.info(STAGES.DALLE_CALL, 'Gerando imagens (Pollinations)');
+    const dalleResult = await generateAdImages(
       detectedNiche,
-      openaiResult.variations.variante1
+      openaiResult.variations,
+      referenceImageUrl
     );
 
     logger.success(STAGES.DALLE_SUCCESS, '✅ Imagens geradas');

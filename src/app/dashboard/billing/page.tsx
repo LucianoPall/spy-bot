@@ -1,6 +1,5 @@
 import { createClient } from "@/utils/supabase/server";
-import { CreditCard, Zap, CheckCircle2, AlertCircle, Key } from "lucide-react";
-import Link from "next/link";
+import { CreditCard, Zap, CheckCircle2, AlertCircle } from "lucide-react";
 import { redirect } from "next/navigation";
 
 export default async function BillingPage() {
@@ -18,10 +17,6 @@ export default async function BillingPage() {
     const currentCredits = sub?.credits ?? 5;
     const currentPlan = sub?.plan ?? "gratis";
     const isPro = currentPlan === "pro";
-
-    // Busca se usuário tem BYOK ativado para mostrar status
-    const { data: profile } = await supabase.from('spybot_brand_profile').select('openai_key').eq('user_id', user.id).single();
-    const hasByok = profile?.openai_key && profile.openai_key.trim() !== "";
 
     return (
         <div className="w-full space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -60,10 +55,10 @@ export default async function BillingPage() {
                                         style={{ width: `${(currentCredits / 5) * 100}%` }}
                                     ></div>
                                 </div>
-                                {currentCredits <= 0 && !hasByok && (
+                                {currentCredits <= 0 && (
                                     <div className="flex items-start gap-2 text-red-400 text-sm bg-red-500/10 p-3 rounded-lg border border-red-500/20">
                                         <AlertCircle size={16} className="mt-0.5 shrink-0" />
-                                        <p>Seus créditos acabaram! Assine o PRO ou insira sua chave da OpenAI nas Configurações para continuar usando sem pagar mensalidade (BYOK).</p>
+                                        <p>Seus créditos acabaram! Assine o PRO para continuar usando.</p>
                                     </div>
                                 )}
                             </div>
@@ -72,11 +67,11 @@ export default async function BillingPage() {
                         <div className="space-y-4 text-sm text-gray-300">
                             <div className="flex items-center gap-3">
                                 <CheckCircle2 size={18} className={isPro ? "text-green-500" : "text-gray-500"} />
-                                <span>Gerações de Imagem DALL-E 3</span>
+                                <span>Geração de Imagens com IA — fotos e criativos com texto</span>
                             </div>
                             <div className="flex items-center gap-3">
                                 <CheckCircle2 size={18} className={isPro ? "text-green-500" : "text-gray-500"} />
-                                <span>Mapeamento de Copywriting IA</span>
+                                <span>Copywriting com IA — 3 variações + análise estratégica</span>
                             </div>
                             <div className="flex items-center gap-3">
                                 <CheckCircle2 size={18} className={isPro ? "text-green-500" : "text-gray-600 opacity-50"} />
@@ -88,15 +83,6 @@ export default async function BillingPage() {
                             </div>
                         </div>
 
-                        {hasByok && !isPro && (
-                            <div className="mt-6 flex items-center gap-3 bg-purple-500/10 border border-purple-500/30 p-4 rounded-xl text-purple-400">
-                                <Key size={24} className="shrink-0" />
-                                <div>
-                                    <p className="text-sm font-bold">Modo Hacker Ativo (BYOK)</p>
-                                    <p className="text-xs opacity-80">Suas extrações usarão seu próprio saldo da OpenAI independentemente dos créditos gratuitos.</p>
-                                </div>
-                            </div>
-                        )}
                     </div>
                 </div>
 

@@ -6,12 +6,10 @@
   "regions": ["sfo1"],
   "functions": {
     "src/app/api/**": {
-      "maxDuration": 60,
-      "memory": 1024
+      "maxDuration": 60
     },
     "src/app/api/internal/batch-scrape/route.ts": {
-      "maxDuration": 300,
-      "memory": 1024
+      "maxDuration": 300
     }
   },
   "crons": [
