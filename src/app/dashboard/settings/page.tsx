@@ -7,6 +7,11 @@ import {
   Eye, EyeOff, Check, X
 } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
+import {
+  getNotificationPrefs,
+  NOTIFICATION_PREFS_METADATA_KEY,
+  type NotificationPrefs,
+} from "@/lib/notification-prefs";
 
 // ============================================================
 // TABS
@@ -483,43 +488,53 @@ function SegurancaTab() {
 // ============================================================
 // TAB: NOTIFICACOES
 // ============================================================
-const NOTIFICATION_PREFS_KEY = "spybot_notification_prefs";
-
-interface NotificationPrefs {
-  emailNewClones: boolean;
-  weeklyDigest: boolean;
-  lowCreditsAlert: boolean;
-}
-
-const defaultPrefs: NotificationPrefs = {
-  emailNewClones: true,
-  weeklyDigest: false,
-  lowCreditsAlert: true,
-};
-
 function NotificacoesTab() {
-  const [prefs, setPrefs] = useState<NotificationPrefs>(defaultPrefs);
+  const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const [saved, setSaved] = useState(false);
+  const [savingKey, setSavingKey] = useState<keyof NotificationPrefs | null>(null);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(NOTIFICATION_PREFS_KEY);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR hydration: localStorage only exists on client
-      if (stored) setPrefs(JSON.parse(stored));
-    } catch {
-      // ignore
-    }
+    const load = async () => {
+      try {
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        setPrefs(getNotificationPrefs(user?.user_metadata));
+      } catch {
+        setPrefs(getNotificationPrefs(null));
+      }
+    };
+    load();
   }, []);
 
-  const togglePref = (key: keyof NotificationPrefs) => {
-    setPrefs((prev) => {
-      const updated = { ...prev, [key]: !prev[key] };
-      localStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify(updated));
+  const togglePref = async (key: keyof NotificationPrefs) => {
+    if (!prefs || savingKey) return;
+
+    const previous = prefs;
+    const updated = { ...prefs, [key]: !prefs[key] };
+    // Otimista: reflete o toggle imediatamente, reverte se falhar.
+    setPrefs(updated);
+    setSavingKey(key);
+    setError(false);
+
+    try {
+      const supabase = createClient();
+      const { error: updateError } = await supabase.auth.updateUser({
+        data: { [NOTIFICATION_PREFS_METADATA_KEY]: updated },
+      });
+      if (updateError) throw updateError;
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-      return updated;
-    });
+    } catch {
+      setPrefs(previous);
+      setError(true);
+      setTimeout(() => setError(false), 3000);
+    } finally {
+      setSavingKey(null);
+    }
   };
+
+  if (!prefs) return <TabLoading />;
 
   const notifications = [
     {
@@ -561,8 +576,9 @@ function NotificacoesTab() {
                 type="button"
                 role="switch"
                 aria-checked={prefs[key]}
+                disabled={savingKey !== null}
                 onClick={() => togglePref(key)}
-                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed ${
                   prefs[key] ? "bg-green-500" : "bg-gray-700"
                 }`}
               >
@@ -579,6 +595,11 @@ function NotificacoesTab() {
         {saved && (
           <p className="text-xs text-green-400 mt-4 flex items-center gap-1">
             <Check size={14} /> Preferencias salvas
+          </p>
+        )}
+        {error && (
+          <p className="text-xs text-red-400 mt-4 flex items-center gap-1">
+            <X size={14} /> Erro ao salvar. Tente novamente.
           </p>
         )}
       </div>

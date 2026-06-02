@@ -14,9 +14,10 @@ export async function GET() {
     }
 
     // Fetch subscription data
+    // NOTE: a coluna real em spybot_subscriptions é `credits` (não `credits_remaining`).
     const { data: subscription } = await supabase
       .from('spybot_subscriptions')
-      .select('credits_remaining, plan')
+      .select('credits, plan')
       .eq('user_id', user.id)
       .single();
 
@@ -33,7 +34,7 @@ export async function GET() {
     }
 
     return NextResponse.json({
-      credits_remaining: subscription.credits_remaining || 5,
+      credits_remaining: subscription.credits ?? 5,
       plan: subscription.plan || 'free',
     }, {
       headers: {
