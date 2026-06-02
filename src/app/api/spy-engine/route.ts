@@ -37,6 +37,8 @@ import {
   uploadImageToSupabase
 } from '@/services';
 import { deductCredit } from '@/services/billing.service';
+import { sendCloneGeneratedEmail, sendLowCreditsEmail } from '@/services/email.service';
+import { getNotificationPrefs } from '@/lib/notification-prefs';
 
 // 120s: criativos gráficos usam gptimage (~15-20s/imagem) + visão + copy.
 export const maxDuration = 120;
@@ -504,6 +506,28 @@ export async function POST(req: Request) {
         }
 
         logger.success(STAGES.SUPABASE_SUCCESS, '✅ Dados salvos em DB');
+
+        // ========== NOTIFICAÇÕES POR EMAIL (best-effort, não bloqueia) ==========
+        try {
+          const prefs = getNotificationPrefs(user.user_metadata);
+
+          if (user.email && prefs.emailNewClones) {
+            await sendCloneGeneratedEmail(user.email, { niche: detectedNiche, adUrl });
+          }
+
+          // Alerta de créditos baixos: dispara UMA vez, ao chegar no último crédito.
+          // (gratis é decrementado acima, então passa por currentCredits === 1 só uma vez.)
+          if (
+            user.email &&
+            prefs.lowCreditsAlert &&
+            currentPlan === 'gratis' &&
+            currentCredits === 1
+          ) {
+            await sendLowCreditsEmail(user.email, { creditsRemaining: currentCredits });
+          }
+        } catch {
+          logger.warn(STAGES.SUPABASE_FAIL, '⚠️ Falha ao enviar notificação por email');
+        }
       } catch (dbError) {
         logger.warn(STAGES.SUPABASE_FAIL, '⚠️ Erro ao salvar em DB');
       }
